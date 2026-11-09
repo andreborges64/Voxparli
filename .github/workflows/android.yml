@@ -1,3 +1,4 @@
+# Compila o aplicativo Android e publica o APK para download.
 name: Build Kotlin APK
 on:
   workflow_dispatch:
@@ -7,6 +8,7 @@ on:
       - '**'
       - '!README.md'
 jobs:
+  # Gera o banco offline e compila o aplicativo nativo.
   build:
     runs-on: ubuntu-latest
     steps:

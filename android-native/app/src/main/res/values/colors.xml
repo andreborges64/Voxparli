@@ -1,3 +1,4 @@
 <resources>
+    <!-- Cor de fundo do ícone do aplicativo. -->
     <color name="ic_launcher_background">#33204F</color>
 </resources>

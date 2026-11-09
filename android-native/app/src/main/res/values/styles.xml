@@ -1,4 +1,5 @@
 <resources>
+    <!-- Tema claro usado pela tela nativa. -->
     <style name="Theme.Voxparli" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:statusBarColor">#F7F8F3</item>

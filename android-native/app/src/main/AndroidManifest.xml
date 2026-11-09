@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- A permissão permite iniciar os exercícios de reconhecimento de fala. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Configura o aplicativo e sua tela inicial. -->
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"

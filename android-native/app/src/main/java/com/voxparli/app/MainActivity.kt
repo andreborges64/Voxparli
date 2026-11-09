@@ -1,5 +1,4 @@
 package com.voxparli.app
-
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -99,7 +98,7 @@ import org.json.JSONObject
 import java.text.Normalizer
 import java.util.Locale
 import kotlin.math.floor
-
+// Paleta de cores da interface nativa.
 private val Ink = Color(0xFF20352F)
 private val Leaf = Color(0xFF347567)
 private val LeafDark = Color(0xFF24594F)
@@ -108,7 +107,6 @@ private val Gold = Color(0xFFE4AE4F)
 private val Paper = Color(0xFFF7F8F3)
 private val Muted = Color(0xFF788781)
 private val Line = Color(0xFFE4E9E3)
-
 private val VoxparliColors = lightColorScheme(
     primary = Leaf,
     onPrimary = Color.White,
@@ -122,7 +120,7 @@ private val VoxparliColors = lightColorScheme(
     onSurfaceVariant = Muted,
     outline = Line
 )
-
+// Modelos de idiomas, cursos, exercícios e progresso.
 private data class Language(
     val id: String,
     val name: String,
@@ -130,9 +128,7 @@ private data class Language(
     val flag: String,
     val speechTag: String
 )
-
 private data class SpeechVoice(val id: String, val label: String)
-
 private val Languages = listOf(
     Language("en", "Inglês", "English", "🇬🇧", "en-US"),
     Language("es", "Espanhol", "Español", "🇪🇸", "es-ES"),
@@ -150,7 +146,6 @@ private val Languages = listOf(
     Language("sv", "Sueco", "Svenska", "🇸🇪", "sv-SE"),
     Language("da", "Dinamarquês", "Dansk", "🇩🇰", "da-DK")
 )
-
 private val CefrLevels = listOf("A1", "A2", "B1", "B2", "C1", "C2")
 private val CustomLevels = mapOf(
     "zh" to listOf("HSK 1", "HSK 2", "HSK 3", "HSK 4", "HSK 5", "HSK 6", "HSK 7", "HSK 8", "HSK 9"),
@@ -164,7 +159,6 @@ private val CourseBands = mapOf(
     "ja" to listOf("A1", "A2", "B1", "B2", "C1"),
     "ko" to listOf("A1", "A2", "B1", "B2", "C1", "C2")
 )
-
 private data class Course(val languageId: String, val levelIndex: Int, val levelStartDone: Int)
 private data class Exercise(val id: String, val prompt: String, val correct: String, val kind: String, val options: List<String>)
 private data class LessonSession(
@@ -197,13 +191,11 @@ private data class AppState(
     val audioPauseUntil: Long = 0,
     val speechVoiceId: String = ""
 )
-
 private enum class Page { HOME, COURSES, REVIEW, PLACEMENT }
-
+// Inicializa a síntese de voz e a interface principal do Android.
 class MainActivity : ComponentActivity() {
     private var textToSpeech: TextToSpeech? = null
     private var availableVoices by mutableStateOf<List<SpeechVoice>>(emptyList())
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         textToSpeech = TextToSpeech(this) { status ->
@@ -221,7 +213,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
     private fun speak(text: String, languageId: String, selectedVoiceId: String) {
         val language = Languages.find { it.id == languageId } ?: return
         textToSpeech?.let { engine ->
@@ -234,7 +225,6 @@ class MainActivity : ComponentActivity() {
             engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "voxparli-${System.currentTimeMillis()}")
         }
     }
-
     override fun onDestroy() {
         textToSpeech?.stop()
         textToSpeech?.shutdown()
@@ -242,7 +232,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 }
-
+// Controla navegação, sessões, revisão, nivelamento e permissões.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, String) -> Unit) {
@@ -259,21 +249,17 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
     var profileOpen by remember { mutableStateOf(false) }
     var levelPickerLanguage by remember { mutableStateOf<String?>(null) }
     var reviewLanguage by rememberSaveable { mutableStateOf("") }
-
     LaunchedEffect(Unit) {
         bank = withContext(Dispatchers.IO) { loadQuestionBank(context) }
         bankLoading = false
     }
-
     fun updateState(transform: (AppState) -> AppState) {
         appState = transform(appState)
         AppStateStore.save(context, appState)
     }
-
     fun notify(message: String) {
         scope.launch { snackbar.showSnackbar(message) }
     }
-
     fun startLesson(languageId: String, reviewMode: Boolean = false) {
         if (bankLoading || bank.isEmpty()) {
             notify("O banco de exercícios ainda está carregando.")
@@ -307,7 +293,6 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
         }
         lesson = LessonSession(languageId, questions, reviewMode)
     }
-
     fun beginPlacement(languageId: String) {
         val courseLevels = levelsFor(languageId)
         val questions = (0 until 8).mapNotNull { index ->
@@ -323,7 +308,6 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
         placementLanguage = languageId
         placement = PlacementSession(languageId, questions)
     }
-
     fun finishLesson(session: LessonSession) {
         if (!session.reviewMode) {
             val completedQuestions = session.questions.take(session.initialQuestionCount)
@@ -352,7 +336,6 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
         lesson = null
         notify("Lição concluída: ${session.score} de ${session.questions.size} corretas.")
     }
-
     LaunchedEffect(appState.audioPauseUntil) {
         val pauseUntil = appState.audioPauseUntil
         val remaining = pauseUntil - System.currentTimeMillis()
@@ -365,7 +348,6 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             updateState { current -> if (current.audioPauseUntil == pauseUntil) current.copy(audioPauseUntil = 0) else current }
         }
     }
-
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
             runCatching {
@@ -408,7 +390,6 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             lesson = lesson?.copy(speechMessage = "Permita o acesso ao microfone para praticar fala.")
         }
     }
-
     LaunchedEffect(lesson?.index, appState.audioEnabled, appState.audioPauseUntil, appState.speechVoiceId) {
         val session = lesson
         if (session != null && appState.audioEnabled && System.currentTimeMillis() >= appState.audioPauseUntil) {
@@ -416,7 +397,6 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             if (exercise != null && exercise.kind != "write") onSpeak(exercise.prompt, session.languageId, appState.speechVoiceId)
         }
     }
-
     MaterialTheme(colorScheme = VoxparliColors) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
@@ -549,7 +529,6 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             }
         }
     }
-
     if (profileOpen) {
         ProfileDialog(
             state = appState,
@@ -563,7 +542,6 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             onImport = { importLauncher.launch(arrayOf("application/json", "text/json")) }
         )
     }
-
     val languageToEdit = levelPickerLanguage
     if (languageToEdit != null) {
         val course = appState.courses.find { it.languageId == languageToEdit }
@@ -583,7 +561,7 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
         }
     }
 }
-
+// Página inicial com acesso aos cursos e ao progresso.
 @Composable
 private fun HomePage(
     state: AppState,
@@ -648,7 +626,6 @@ private fun HomePage(
         item { UnitRow("03", "Uma conversa simples", "Perguntas e respostas", "A seguir") }
     }
 }
-
 @Composable
 private fun CoursesPage(
     state: AppState,
@@ -678,7 +655,7 @@ private fun CoursesPage(
         }
     }
 }
-
+// Página de revisão com seleção do idioma do curso.
 @Composable
 private fun ReviewPage(
     state: AppState,
@@ -724,7 +701,7 @@ private fun ReviewPage(
         }
     }
 }
-
+// Páginas do teste de nível e prática dos exercícios.
 @Composable
 private fun PlacementPage(
     session: PlacementSession?,
@@ -788,7 +765,6 @@ private fun PlacementPage(
         }
     }
 }
-
 @Composable
 private fun LessonPage(
     session: LessonSession,
@@ -811,7 +787,6 @@ private fun LessonPage(
     } else {
         normalizeAnswer(session.selected) == normalizeAnswer(question.correct)
     }
-
     LazyColumn(
         contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(13.dp)
@@ -908,7 +883,7 @@ private fun LessonPage(
         }
     }
 }
-
+// Cartões e componentes compartilhados pelas telas.
 @Composable
 private fun CourseCard(course: Course, done: Int, onStart: () -> Unit, onLevel: () -> Unit) {
     val language = Languages.find { it.id == course.languageId } ?: Languages.first()
@@ -940,7 +915,6 @@ private fun CourseCard(course: Course, done: Int, onStart: () -> Unit, onLevel: 
         }
     }
 }
-
 @Composable
 private fun LanguageRow(language: Language, enrolled: Boolean, onClick: () -> Unit) {
     Card(
@@ -965,7 +939,6 @@ private fun LanguageRow(language: Language, enrolled: Boolean, onClick: () -> Un
         }
     }
 }
-
 @Composable
 private fun AnswerOption(option: String, selected: Boolean, correct: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val color = when {
@@ -983,7 +956,6 @@ private fun AnswerOption(option: String, selected: Boolean, correct: Boolean, en
         Text(option, modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 13.dp), fontSize = 14.sp, color = Ink)
     }
 }
-
 @Composable
 private fun UnitRow(number: String, title: String, subtitle: String, status: String) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Line), shape = RoundedCornerShape(13.dp)) {
@@ -1000,7 +972,6 @@ private fun UnitRow(number: String, title: String, subtitle: String, status: Str
         }
     }
 }
-
 @Composable
 private fun PageHeader(eyebrow: String, title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(bottom = 4.dp)) {
@@ -1009,7 +980,6 @@ private fun PageHeader(eyebrow: String, title: String, subtitle: String) {
         Text(subtitle, color = Muted, fontSize = 13.sp)
     }
 }
-
 @Composable
 private fun EmptyPanel(title: String, message: String, action: String, onAction: () -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Line), shape = RoundedCornerShape(16.dp)) {
@@ -1020,12 +990,11 @@ private fun EmptyPanel(title: String, message: String, action: String, onAction:
         }
     }
 }
-
+// Seleção de idioma e preferências do perfil, incluindo a voz do sistema.
 @Composable
 private fun LanguageChooser(selectedId: String, onSelect: (String) -> Unit) {
     LanguageChooser(selectedId, onSelect, Languages)
 }
-
 @Composable
 private fun LanguageChooser(selectedId: String, onSelect: (String) -> Unit, languages: List<Language>) {
     var expanded by remember { mutableStateOf(false) }
@@ -1044,7 +1013,6 @@ private fun LanguageChooser(selectedId: String, onSelect: (String) -> Unit, lang
         }
     }
 }
-
 @Composable
 private fun ProfileDialog(
     state: AppState,
@@ -1102,7 +1070,6 @@ private fun ProfileDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
     )
 }
-
 @Composable
 private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1110,7 +1077,7 @@ private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }
-
+// Configuração do nível do curso.
 @Composable
 private fun LevelPickerDialog(languageId: String, selectedIndex: Int, onDismiss: () -> Unit, onSelect: (Int) -> Unit) {
     val language = Languages.find { it.id == languageId } ?: Languages.first()
@@ -1129,7 +1096,6 @@ private fun LevelPickerDialog(languageId: String, selectedIndex: Int, onDismiss:
         confirmButton = { TextButton(onClick = onDismiss) { Text("Fechar") } }
     )
 }
-
 private fun levelsFor(languageId: String): List<String> = CustomLevels[languageId] ?: CefrLevels
 private fun levelName(languageId: String, index: Int): String = levelsFor(languageId)[index.coerceIn(0, levelsFor(languageId).lastIndex)]
 private fun scaleName(languageId: String): String = CustomScaleNames[languageId] ?: "CEFR"
@@ -1140,7 +1106,7 @@ private fun courseBand(languageId: String, index: Int): String {
     return CourseBands[languageId]?.getOrNull(bandIndex)
         ?: if (languageId == "la") CefrLevels.getOrElse(bandIndex) { level } else level
 }
-
+// Carrega questões offline e oferece suporte à fala e ao progresso salvo.
 private fun loadQuestionBank(context: Context): Map<String, List<Exercise>> {
     val json = context.assets.open("question-bank.json").bufferedReader().use { it.readText() }
     val root = JSONObject(json)
@@ -1163,14 +1129,12 @@ private fun loadQuestionBank(context: Context): Map<String, List<Exercise>> {
     }
     return result
 }
-
 private fun normalizeAnswer(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
     .replace(Regex("\\p{Mn}+"), "")
     .lowercase(Locale.ROOT)
     .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
     .trim()
     .replace(Regex("\\s+"), " ")
-
 private fun startSpeechRecognition(activity: Activity, languageId: String, onResult: (String) -> Unit, onFailure: (String) -> Unit) {
     if (!SpeechRecognizer.isRecognitionAvailable(activity)) {
         onFailure("Reconhecimento de voz indisponível neste dispositivo.")
@@ -1206,20 +1170,17 @@ private fun startSpeechRecognition(activity: Activity, languageId: String, onRes
         onFailure("Não foi possível iniciar o reconhecimento de voz.")
     }
 }
-
+// Lê, grava, importa e exporta o progresso local do usuário.
 private object AppStateStore {
     private const val Preferences = "voxparli-native"
     private const val StateKey = "state"
-
     fun load(context: Context): AppState {
         val raw = context.getSharedPreferences(Preferences, Context.MODE_PRIVATE).getString(StateKey, null) ?: return AppState()
         return runCatching { decode(raw) }.getOrDefault(AppState())
     }
-
     fun save(context: Context, state: AppState) {
         context.getSharedPreferences(Preferences, Context.MODE_PRIVATE).edit().putString(StateKey, export(state).toString()).apply()
     }
-
     fun export(state: AppState): JSONObject {
         val courses = JSONArray()
         state.courses.forEach { course ->
@@ -1255,7 +1216,6 @@ private object AppStateStore {
             })
         }
     }
-
     fun decode(raw: String): AppState {
         val root = JSONObject(raw)
         val data = root.optJSONObject("data") ?: root

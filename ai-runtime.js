@@ -1,4 +1,3 @@
-// Kept separate from the classic app script so profile and course features work
-// even when someone opens index.html directly from disk. Vite bundles this
-// dynamic import for hosted web and Capacitor builds.
+// Carrega a IA separadamente para manter o app e os cursos disponíveis offline.
+// O Vite inclui esta importação dinâmica nas versões web e Capacitor.
 window.voxparliLoadAI = () => import('@mlc-ai/web-llm');
