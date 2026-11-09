@@ -146,5 +146,21 @@
     return result
   }
   function generate(lang,level,seenIds=[],seed=Date.now()){const levels=['A1','A2','B1','B2','C1','C2'];if(extraPhrases[lang]){const candidates=makeExtraBank(lang,level),used=new Set(seenIds);let available=candidates.filter(x=>!used.has(x.id));if(available.length<10)available=candidates;const picked=shuffle(available,seed).slice(0,10),allAnswers=candidates.filter(x=>x.kind==='read'&&!x.prompt.startsWith('Como se lê')).map(x=>x.correct);return picked.map((item,i)=>{if(item.kind==='write'||item.prompt.startsWith('Como se lê'))return {...item,options:[]};let distractors=shuffle([...new Set(allAnswers.filter(x=>x!==item.correct))],seed+i*97).slice(0,3);return {...item,options:shuffle([item.correct,...distractors],seed+i*211)}})}const current=makeBank(lang,level),used=new Set(seenIds),available=current.filter(x=>!used.has(x.id)),previous=levels.indexOf(level)>0?makeBank(lang,levels[levels.indexOf(level)-1]).filter(x=>!used.has(x.id)):[];let picked=shuffle(available,seed).slice(0,9);if(previous.length)picked.push(shuffle(previous,seed+7919)[0]);if(picked.length<10)picked=[...picked,...shuffle(available.filter(x=>!picked.some(p=>p.id===x.id)),seed+31).slice(0,10-picked.length)];const allAnswers=[...current,...previous].map(x=>x.correct);return shuffle(picked,seed+17).map((item,i)=>{let distractors=shuffle([...new Set(allAnswers.filter(x=>x!==item.correct))],seed+i*97).slice(0,3);if(i%3===1)return {id:item.id,prompt:item.correct,correct:item.prompt,kind:'write',options:[]};return {...item,kind:'translate',options:shuffle([item.correct,...distractors],seed+i*211)}})}
-  window.voxparliLocalBank={generate,normalize};
+  function catalog(lang,level){
+    if(extraPhrases[lang]){
+      const candidates=makeExtraBank(lang,level),allAnswers=candidates.filter(x=>x.kind==='read'&&!x.prompt.startsWith('Como se lê')).map(x=>x.correct);
+      return candidates.map((item,i)=>{
+        if(item.kind==='write'||item.prompt.startsWith('Como se lê'))return {...item,options:[]};
+        const distractors=shuffle([...new Set(allAnswers.filter(x=>x!==item.correct))],i+97).slice(0,3);
+        return {...item,options:shuffle([item.correct,...distractors],i+211)}
+      })
+    }
+    const current=makeBank(lang,level),allAnswers=current.map(x=>x.correct);
+    return current.map((item,i)=>{
+      if(i%3===1)return {id:item.id,prompt:item.correct,correct:item.prompt,kind:'write',options:[]};
+      const distractors=shuffle([...new Set(allAnswers.filter(x=>x!==item.correct))],i+97).slice(0,3);
+      return {...item,kind:'translate',options:shuffle([item.correct,...distractors],i+211)}
+    })
+  }
+  window.voxparliLocalBank={generate,normalize,catalog};
 })();
