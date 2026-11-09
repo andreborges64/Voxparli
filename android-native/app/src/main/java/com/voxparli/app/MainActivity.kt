@@ -348,7 +348,6 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
         val session = lesson
         val activity = context as? Activity
         if (granted && session != null && activity != null) {
-            val exercise = session.questions[session.index]
             lesson = session.copy(speechMessage = "Escutando…")
             startSpeechRecognition(activity, session.languageId,
                 onResult = { heard ->
@@ -362,7 +361,7 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
                         speechMessage = if (correct) "Fala reconhecida!" else "Não coincidiu com a frase."
                     )
                 },
-                onError = { message -> lesson = lesson?.copy(speechMessage = message) }
+                onFailure = { message -> lesson = lesson?.copy(speechMessage = message) }
             )
         } else if (!granted) {
             lesson = lesson?.copy(speechMessage = "Permita o acesso ao microfone para praticar fala.")
