@@ -91,6 +91,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -130,6 +131,8 @@ private data class Language(
     val speechTag: String
 )
 
+private data class SpeechVoice(val id: String, val label: String)
+
 private val Languages = listOf(
     Language("en", "Inglês", "English", "🇬🇧", "en-US"),
     Language("es", "Espanhol", "Español", "🇪🇸", "es-ES"),
@@ -168,6 +171,7 @@ private data class LessonSession(
     val languageId: String,
     val questions: List<Exercise>,
     val reviewMode: Boolean,
+    val initialQuestionCount: Int = questions.size,
     val index: Int = 0,
     val selected: String = "",
     val checked: Boolean = false,
@@ -189,28 +193,43 @@ private data class AppState(
     val seenQuestionIds: Map<String, List<String>> = emptyMap(),
     val completedQuestionIds: Map<String, List<String>> = emptyMap(),
     val audioEnabled: Boolean = true,
-    val speakingEnabled: Boolean = false
+    val speakingEnabled: Boolean = false,
+    val audioPauseUntil: Long = 0,
+    val speechVoiceId: String = ""
 )
 
 private enum class Page { HOME, COURSES, REVIEW, PLACEMENT }
 
 class MainActivity : ComponentActivity() {
     private var textToSpeech: TextToSpeech? = null
+    private var availableVoices by mutableStateOf<List<SpeechVoice>>(emptyList())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        textToSpeech = TextToSpeech(this) {}
+        textToSpeech = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                availableVoices = textToSpeech?.voices.orEmpty()
+                    .sortedWith(compareBy({ it.locale.displayLanguage }, { it.name }))
+                    .map { voice ->
+                        SpeechVoice(voice.name, "${voice.locale.getDisplayLanguage(Locale.getDefault())} · ${voice.name}")
+                    }
+            }
+        }
         setContent {
             MaterialTheme(colorScheme = VoxparliColors) {
-                VoxparliApp(onSpeak = ::speak)
+                VoxparliApp(voices = availableVoices, onSpeak = ::speak)
             }
         }
     }
 
-    private fun speak(text: String, languageId: String) {
+    private fun speak(text: String, languageId: String, selectedVoiceId: String) {
         val language = Languages.find { it.id == languageId } ?: return
         textToSpeech?.let { engine ->
-            engine.language = Locale.forLanguageTag(language.speechTag)
+            val locale = Locale.forLanguageTag(language.speechTag)
+            val preferredVoice = engine.voices?.firstOrNull {
+                it.name == selectedVoiceId && it.locale.language == locale.language
+            }
+            if (preferredVoice != null) engine.voice = preferredVoice else engine.language = locale
             engine.setSpeechRate(0.92f)
             engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "voxparli-${System.currentTimeMillis()}")
         }
@@ -226,7 +245,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
+private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, String) -> Unit) {
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -239,6 +258,7 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
     var placementLanguage by rememberSaveable { mutableStateOf("en") }
     var profileOpen by remember { mutableStateOf(false) }
     var levelPickerLanguage by remember { mutableStateOf<String?>(null) }
+    var reviewLanguage by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         bank = withContext(Dispatchers.IO) { loadQuestionBank(context) }
@@ -274,7 +294,13 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
         val seen = appState.seenQuestionIds[languageId].orEmpty().toSet()
         val fresh = if (reviewMode) source.shuffled().take(10) else source.filterNot { it.id in seen }.shuffled().take(10)
         val firstPass = (fresh + source.shuffled().filterNot { candidate -> fresh.any { it.id == candidate.id } }).take(10)
-        val questions = if (firstPass.size >= 10) firstPass else (firstPass + source.shuffled().take(10 - firstPass.size)).take(10)
+        val selectedQuestions = if (firstPass.size >= 10) firstPass else (firstPass + source.shuffled().take(10 - firstPass.size)).take(10)
+        val addSpeakingExercises = !reviewMode && appState.speakingEnabled && System.currentTimeMillis() >= appState.audioPauseUntil
+        val questions = selectedQuestions.mapIndexed { index, exercise ->
+            if (addSpeakingExercises && index in listOf(3, 7)) {
+                exercise.copy(kind = "speak", correct = exercise.prompt, options = emptyList())
+            } else exercise
+        }
         if (questions.isEmpty()) {
             notify("Não foi possível preparar a lição.")
             return
@@ -300,7 +326,9 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
 
     fun finishLesson(session: LessonSession) {
         if (!session.reviewMode) {
-            val done = (appState.doneCounts[session.languageId] ?: 0) + session.questions.size
+            val completedQuestions = session.questions.take(session.initialQuestionCount)
+            val completedIds = completedQuestions.map { it.id }.distinct()
+            val done = (appState.doneCounts[session.languageId] ?: 0) + completedIds.size
             val courseIndex = appState.courses.indexOfFirst { it.languageId == session.languageId }
             val nextCourses = appState.courses.toMutableList()
             if (courseIndex >= 0) {
@@ -315,14 +343,27 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
                     courses = nextCourses,
                     doneCounts = current.doneCounts + (session.languageId to done),
                     seenQuestionIds = current.seenQuestionIds + (session.languageId to
-                        (current.seenQuestionIds[session.languageId].orEmpty() + session.questions.map { it.id }).distinct().takeLast(10000)),
+                        (current.seenQuestionIds[session.languageId].orEmpty() + completedIds).distinct().takeLast(10000)),
                     completedQuestionIds = current.completedQuestionIds + (session.languageId to
-                        (current.completedQuestionIds[session.languageId].orEmpty() + session.questions.map { it.id }).distinct().takeLast(2000))
+                        (current.completedQuestionIds[session.languageId].orEmpty() + completedIds).distinct().takeLast(2000))
                 )
             }
         }
         lesson = null
         notify("Lição concluída: ${session.score} de ${session.questions.size} corretas.")
+    }
+
+    LaunchedEffect(appState.audioPauseUntil) {
+        val pauseUntil = appState.audioPauseUntil
+        val remaining = pauseUntil - System.currentTimeMillis()
+        if (remaining > 0) {
+            delay(remaining)
+            updateState { current ->
+                if (current.audioPauseUntil == pauseUntil) current.copy(audioPauseUntil = 0) else current
+            }
+        } else if (pauseUntil != 0L) {
+            updateState { current -> if (current.audioPauseUntil == pauseUntil) current.copy(audioPauseUntil = 0) else current }
+        }
     }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -368,11 +409,11 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
         }
     }
 
-    LaunchedEffect(lesson?.index, appState.audioEnabled) {
+    LaunchedEffect(lesson?.index, appState.audioEnabled, appState.audioPauseUntil, appState.speechVoiceId) {
         val session = lesson
-        if (session != null && appState.audioEnabled) {
+        if (session != null && appState.audioEnabled && System.currentTimeMillis() >= appState.audioPauseUntil) {
             val exercise = session.questions.getOrNull(session.index)
-            if (exercise != null && exercise.kind != "write") onSpeak(exercise.prompt, session.languageId)
+            if (exercise != null && exercise.kind != "write") onSpeak(exercise.prompt, session.languageId, appState.speechVoiceId)
         }
     }
 
@@ -419,19 +460,27 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
                         session = activeLesson,
                         appState = appState,
                         onSelect = { value -> lesson = lesson?.copy(selected = value, speechMessage = "") },
-                        onSpeak = onSpeak,
+                        onSpeak = { text, language -> onSpeak(text, language, appState.speechVoiceId) },
+                        onPauseAudio = {
+                            updateState { it.copy(audioPauseUntil = System.currentTimeMillis() + 15 * 60 * 1000L) }
+                            notify("Áudio e fala desativados por 15 minutos.")
+                        },
                         onCheck = {
                             val current = lesson ?: return@LessonPage
                             val exercise = current.questions[current.index]
-                            val answer = if (current.speechMessage.isNotBlank()) exercise.prompt else current.selected
-                            val expected = if (current.speechMessage.isNotBlank()) exercise.prompt else exercise.correct
-                            val correct = normalizeAnswer(answer) == normalizeAnswer(expected)
+                            val correct = normalizeAnswer(current.selected) == normalizeAnswer(exercise.correct)
                             lesson = current.copy(checked = true, score = current.score + if (correct) 1 else 0)
                         },
                         onNext = {
                             val current = lesson ?: return@LessonPage
-                            if (current.index == current.questions.lastIndex) finishLesson(current)
-                            else lesson = current.copy(index = current.index + 1, selected = "", checked = false, speechMessage = "")
+                            val exercise = current.questions[current.index]
+                            val correct = normalizeAnswer(current.selected) == normalizeAnswer(exercise.correct)
+                            if (correct && current.index == current.questions.lastIndex) {
+                                finishLesson(current)
+                            } else {
+                                val questions = if (correct) current.questions else current.questions + exercise
+                                lesson = current.copy(questions = questions, index = current.index + 1, selected = "", checked = false, speechMessage = "")
+                            }
                         },
                         onSpeech = {
                             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -463,6 +512,11 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
                         )
                         Page.REVIEW -> ReviewPage(
                             state = appState,
+                            selectedLanguage = reviewLanguage.ifBlank {
+                                appState.courses.firstOrNull { !appState.completedQuestionIds[it.languageId].isNullOrEmpty() }?.languageId
+                                    ?: appState.courses.firstOrNull()?.languageId.orEmpty()
+                            },
+                            onLanguage = { reviewLanguage = it },
                             onStart = { language -> startLesson(language, reviewMode = true) },
                             onCourses = { page = Page.COURSES }
                         )
@@ -499,9 +553,10 @@ private fun VoxparliApp(onSpeak: (String, String) -> Unit) {
     if (profileOpen) {
         ProfileDialog(
             state = appState,
+            voices = voices,
             onDismiss = { profileOpen = false },
-            onSave = { name, audio, speaking ->
-                updateState { it.copy(profileName = name.trim(), audioEnabled = audio, speakingEnabled = speaking) }
+            onSave = { name, audio, speaking, voiceId ->
+                updateState { it.copy(profileName = name.trim(), audioEnabled = audio, speakingEnabled = speaking, speechVoiceId = voiceId) }
                 profileOpen = false
             },
             onExport = { exportLauncher.launch("voxparli-progresso.json") },
@@ -625,24 +680,44 @@ private fun CoursesPage(
 }
 
 @Composable
-private fun ReviewPage(state: AppState, onStart: (String) -> Unit, onCourses: () -> Unit) {
-    val courseWithHistory = state.courses.firstOrNull { !state.completedQuestionIds[it.languageId].isNullOrEmpty() }
+private fun ReviewPage(
+    state: AppState,
+    selectedLanguage: String,
+    onLanguage: (String) -> Unit,
+    onStart: (String) -> Unit,
+    onCourses: () -> Unit
+) {
+    val availableLanguages = state.courses.mapNotNull { course ->
+        Languages.find { it.id == course.languageId }
+    }
+    val selectedCourse = state.courses.find { it.languageId == selectedLanguage }
+    val hasHistory = !state.completedQuestionIds[selectedLanguage].isNullOrEmpty()
     LazyColumn(
         contentPadding = PaddingValues(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item { PageHeader("FIXE O QUE APRENDEU", "Revisão", "Recupere palavras e frases das suas lições.") }
+        if (availableLanguages.isNotEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Idioma para revisar", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    LanguageChooser(selectedLanguage, onLanguage, availableLanguages)
+                }
+            }
+        }
         item {
-            if (courseWithHistory != null) {
+            if (selectedCourse != null && hasHistory) {
                 Card(colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Line), shape = RoundedCornerShape(16.dp)) {
                     Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Uma revisão rápida", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text("Pratique questões já concluídas e fortaleça sua memória.", color = Muted)
-                        Button(onClick = { onStart(courseWithHistory.languageId) }, modifier = Modifier.fillMaxWidth()) {
+                        Button(onClick = { onStart(selectedCourse.languageId) }, modifier = Modifier.fillMaxWidth()) {
                             Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Começar revisão")
                         }
                     }
                 }
+            } else if (availableLanguages.isNotEmpty()) {
+                EmptyPanel("Ainda não há exercícios para revisar", "Conclua uma lição neste idioma para iniciar uma revisão.", "Escolher um idioma", onCourses)
             } else {
                 EmptyPanel("Suas revisões aparecem aqui", "Conclua algumas lições para montar seu treino personalizado.", "Escolher um idioma", onCourses)
             }
@@ -720,14 +795,17 @@ private fun LessonPage(
     appState: AppState,
     onSelect: (String) -> Unit,
     onSpeak: (String, String) -> Unit,
+    onPauseAudio: () -> Unit,
     onCheck: () -> Unit,
     onNext: () -> Unit,
     onSpeech: () -> Unit
 ) {
     val language = Languages.find { it.id == session.languageId } ?: Languages.first()
     val question = session.questions[session.index]
-    val writeMode = question.kind == "write" || (question.kind == "read" && question.options.isEmpty())
-    val speakingMode = appState.speakingEnabled && session.index in listOf(3, 7) && !session.reviewMode
+    val speechPaused = System.currentTimeMillis() < appState.audioPauseUntil
+    val writeMode = question.kind == "write" || (question.kind == "read" && question.options.isEmpty()) ||
+        (question.kind == "speak" && speechPaused)
+    val speakingMode = question.kind == "speak" && !speechPaused
     val correct = if (speakingMode) {
         normalizeAnswer(session.selected) == normalizeAnswer(question.prompt)
     } else {
@@ -760,11 +838,18 @@ private fun LessonPage(
             Card(colors = CardDefaults.cardColors(containerColor = SoftGreen), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(question.prompt, fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Ink)
-                    if (appState.audioEnabled && !writeMode) {
+                    if (appState.audioEnabled && !speechPaused && !writeMode) {
                         TextButton(onClick = { onSpeak(question.prompt, session.languageId) }) {
                             Icon(Icons.Filled.VolumeUp, null); Spacer(Modifier.width(6.dp)); Text("Ouvir")
                         }
                     }
+                }
+            }
+        }
+        if (question.kind != "write" && !(question.kind == "read" && question.options.isEmpty())) {
+            item {
+                OutlinedButton(onClick = onPauseAudio, modifier = Modifier.fillMaxWidth()) {
+                    Text("Desativar áudio e fala por 15 minutos")
                 }
             }
         }
@@ -938,14 +1023,19 @@ private fun EmptyPanel(title: String, message: String, action: String, onAction:
 
 @Composable
 private fun LanguageChooser(selectedId: String, onSelect: (String) -> Unit) {
+    LanguageChooser(selectedId, onSelect, Languages)
+}
+
+@Composable
+private fun LanguageChooser(selectedId: String, onSelect: (String) -> Unit, languages: List<Language>) {
     var expanded by remember { mutableStateOf(false) }
-    val selected = Languages.find { it.id == selectedId } ?: Languages.first()
+    val selected = languages.find { it.id == selectedId } ?: languages.firstOrNull() ?: Languages.first()
     Box {
         OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
             Text("${selected.flag}  ${selected.name}  ·  ${scaleName(selected.id)}", maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            Languages.forEach { language ->
+            languages.forEach { language ->
                 DropdownMenuItem(
                     text = { Text("${language.flag}  ${language.name}") },
                     onClick = { onSelect(language.id); expanded = false }
@@ -958,14 +1048,17 @@ private fun LanguageChooser(selectedId: String, onSelect: (String) -> Unit) {
 @Composable
 private fun ProfileDialog(
     state: AppState,
+    voices: List<SpeechVoice>,
     onDismiss: () -> Unit,
-    onSave: (String, Boolean, Boolean) -> Unit,
+    onSave: (String, Boolean, Boolean, String) -> Unit,
     onExport: () -> Unit,
     onImport: () -> Unit
 ) {
     var name by remember(state.profileName) { mutableStateOf(state.profileName) }
     var audio by remember(state.audioEnabled) { mutableStateOf(state.audioEnabled) }
     var speaking by remember(state.speakingEnabled) { mutableStateOf(state.speakingEnabled) }
+    var voiceId by remember(state.speechVoiceId) { mutableStateOf(state.speechVoiceId) }
+    var voiceMenuExpanded by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (state.profileName.isBlank()) "Criar perfil" else "Seu perfil") },
@@ -975,6 +1068,29 @@ private fun ProfileDialog(
                 OutlinedTextField(value = name, onValueChange = { name = it.take(40) }, label = { Text("Como quer ser chamado(a)?") }, singleLine = true)
                 SettingSwitch("Áudio automático", audio) { audio = it }
                 SettingSwitch("Exercícios de fala", speaking) { speaking = it }
+                Text("Voz do sistema", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Box {
+                    OutlinedButton(onClick = { voiceMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            voices.firstOrNull { it.id == voiceId }?.label ?: "Automática por idioma",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    DropdownMenu(expanded = voiceMenuExpanded, onDismissRequest = { voiceMenuExpanded = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Automática por idioma") },
+                            onClick = { voiceId = ""; voiceMenuExpanded = false }
+                        )
+                        voices.forEach { voice ->
+                            DropdownMenuItem(
+                                text = { Text(voice.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                onClick = { voiceId = voice.id; voiceMenuExpanded = false }
+                            )
+                        }
+                    }
+                }
+                Text("A voz escolhida será usada quando estiver disponível no idioma do exercício.", color = Muted, fontSize = 11.sp)
                 Divider(color = Line)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = onExport, modifier = Modifier.weight(1f)) { Text("Exportar") }
@@ -982,7 +1098,7 @@ private fun ProfileDialog(
                 }
             }
         },
-        confirmButton = { Button(onClick = { onSave(name, audio, speaking) }) { Text("Salvar") } },
+        confirmButton = { Button(onClick = { onSave(name, audio, speaking, voiceId) }) { Text("Salvar") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
     )
 }
@@ -1132,6 +1248,8 @@ private object AppStateStore {
                 put("streak", state.streak)
                 put("audioEnabled", state.audioEnabled)
                 put("speakingEnabled", state.speakingEnabled)
+                put("audioPauseUntil", state.audioPauseUntil)
+                put("speechVoiceId", state.speechVoiceId)
                 put("localSeen", seen)
                 put("nativeCompletedQuestionIds", completed)
             })
@@ -1177,7 +1295,9 @@ private object AppStateStore {
             seenQuestionIds = seen,
             completedQuestionIds = completed,
             audioEnabled = data.optBoolean("audioEnabled", true),
-            speakingEnabled = data.optBoolean("speakingEnabled", false)
+            speakingEnabled = data.optBoolean("speakingEnabled", false),
+            audioPauseUntil = data.optLong("audioPauseUntil", 0),
+            speechVoiceId = data.optString("speechVoiceId", "")
         )
     }
 }
