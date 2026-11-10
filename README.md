@@ -10,6 +10,7 @@ Voxparli reúne o curso web e um aplicativo Android nativo em Kotlin para estuda
 - Geração de lições novas por IA local com WebLLM na versão web; depois de ativar a IA em um curso, o botão **Continuar** gera novas questões automaticamente quando a fila daquele nível acabar.
 - Nivelamento por idioma: CEFR nos cursos europeus, HSK 1–9 no mandarim, JLPT N5–N1 no japonês, TOPIK 1–6 no coreano e etapas de leitura próprias para latim.
 - Lições de dez questões com correção, pontuação, progresso e sequência diária.
+- Palavras clicáveis nos enunciados, com balão de tradução no curso web e no aplicativo Android.
 - Revisão e trilha de unidades.
 - Banco combinatório local para inglês, espanhol, italiano, francês e alemão, com até 1.440 combinações por idioma e nível.
 - Interface adaptável para celular e desktop na web, com cache offline como PWA.

@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -84,8 +85,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -160,7 +167,18 @@ private val CourseBands = mapOf(
     "ko" to listOf("A1", "A2", "B1", "B2", "C1", "C2")
 )
 private data class Course(val languageId: String, val levelIndex: Int, val levelStartDone: Int)
-private data class Exercise(val id: String, val prompt: String, val correct: String, val kind: String, val options: List<String>)
+private data class Exercise(
+    val id: String,
+    val prompt: String,
+    val correct: String,
+    val kind: String,
+    val options: List<String>,
+    val translationReverse: Boolean = false
+)
+private data class ExerciseBank(
+    val questions: Map<String, List<Exercise>>,
+    val wordTranslations: Map<String, Map<String, String>>
+)
 private data class LessonSession(
     val languageId: String,
     val questions: List<Exercise>,
@@ -241,6 +259,7 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
     val scope = rememberCoroutineScope()
     var appState by remember { mutableStateOf(AppStateStore.load(context)) }
     var bank by remember { mutableStateOf<Map<String, List<Exercise>>>(emptyMap()) }
+    var wordTranslations by remember { mutableStateOf<Map<String, Map<String, String>>>(emptyMap()) }
     var bankLoading by remember { mutableStateOf(true) }
     var page by rememberSaveable { mutableStateOf(Page.HOME) }
     var lesson by remember { mutableStateOf<LessonSession?>(null) }
@@ -250,7 +269,9 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
     var levelPickerLanguage by remember { mutableStateOf<String?>(null) }
     var reviewLanguage by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(Unit) {
-        bank = withContext(Dispatchers.IO) { loadQuestionBank(context) }
+        val loadedBank = withContext(Dispatchers.IO) { loadQuestionBank(context) }
+        bank = loadedBank.questions
+        wordTranslations = loadedBank.wordTranslations
         bankLoading = false
     }
     fun updateState(transform: (AppState) -> AppState) {
@@ -439,6 +460,7 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
                     LessonPage(
                         session = activeLesson,
                         appState = appState,
+                        wordTranslations = wordTranslations,
                         onSelect = { value -> lesson = lesson?.copy(selected = value, speechMessage = "") },
                         onSpeak = { text, language -> onSpeak(text, language, appState.speechVoiceId) },
                         onPauseAudio = {
@@ -766,9 +788,26 @@ private fun PlacementPage(
     }
 }
 @Composable
+private fun clickablePrompt(value: String): AnnotatedString {
+    val words = Regex("""[\p{IsHan}\p{IsHiragana}\p{IsKatakana}\p{IsHangul}]+|[\p{L}\p{M}]+(?:['’\-][\p{L}\p{M}]+)*""").findAll(value)
+    return buildAnnotatedString {
+        var cursor = 0
+        words.forEach { match ->
+            append(value.substring(cursor, match.range.first))
+            pushStringAnnotation(tag = "prompt-word", annotation = match.value)
+            withStyle(SpanStyle(color = LeafDark, textDecoration = TextDecoration.Underline)) {
+                append(match.value)
+            }
+            pop()
+            cursor = match.range.last + 1
+        }
+        append(value.substring(cursor))
+    }
+}
 private fun LessonPage(
     session: LessonSession,
     appState: AppState,
+    wordTranslations: Map<String, Map<String, String>>,
     onSelect: (String) -> Unit,
     onSpeak: (String, String) -> Unit,
     onPauseAudio: () -> Unit,
@@ -778,6 +817,8 @@ private fun LessonPage(
 ) {
     val language = Languages.find { it.id == session.languageId } ?: Languages.first()
     val question = session.questions[session.index]
+    val lessonLevel = courseBand(session.languageId, appState.courses.find { it.languageId == session.languageId }?.levelIndex ?: 0)
+    var selectedWord by remember(session.index) { mutableStateOf<String?>(null) }
     val speechPaused = System.currentTimeMillis() < appState.audioPauseUntil
     val writeMode = question.kind == "write" || (question.kind == "read" && question.options.isEmpty()) ||
         (question.kind == "speak" && speechPaused)
@@ -812,7 +853,29 @@ private fun LessonPage(
         item {
             Card(colors = CardDefaults.cardColors(containerColor = SoftGreen), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(question.prompt, fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    val prompt = clickablePrompt(question.prompt)
+                    ClickableText(
+                        text = prompt,
+                        style = TextStyle(fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Ink),
+                        onClick = { offset ->
+                            val word = prompt.getStringAnnotations("prompt-word", offset, offset).firstOrNull()?.item
+                            if (word != null) selectedWord = if (selectedWord == word) null else word
+                        }
+                    )
+                    selectedWord?.let { word ->
+                        val translationKey = "${session.languageId}:$lessonLevel${if (question.translationReverse) ":reverse" else ""}"
+                        val translation = wordTranslations[translationKey]?.get(normalizeAnswer(word))
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            border = BorderStroke(1.dp, Line),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp)) {
+                                Text("Tradução de “$word”", color = Muted, fontSize = 11.sp)
+                                Text(translation ?: "Tradução indisponível para esta palavra.", color = LeafDark, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                     if (appState.audioEnabled && !speechPaused && !writeMode) {
                         TextButton(onClick = { onSpeak(question.prompt, session.languageId) }) {
                             Icon(Icons.Filled.VolumeUp, null); Spacer(Modifier.width(6.dp)); Text("Ouvir")
@@ -1107,7 +1170,7 @@ private fun courseBand(languageId: String, index: Int): String {
         ?: if (languageId == "la") CefrLevels.getOrElse(bandIndex) { level } else level
 }
 // Carrega questões offline e oferece suporte à fala e ao progresso salvo.
-private fun loadQuestionBank(context: Context): Map<String, List<Exercise>> {
+private fun loadQuestionBank(context: Context): ExerciseBank {
     val json = context.assets.open("question-bank.json").bufferedReader().use { it.readText() }
     val root = JSONObject(json)
     val result = mutableMapOf<String, List<Exercise>>()
@@ -1123,11 +1186,27 @@ private fun loadQuestionBank(context: Context): Map<String, List<Exercise>> {
                 prompt = item.optString("prompt"),
                 correct = item.optString("correct"),
                 kind = item.optString("kind", "translate"),
-                options = (0 until options.length()).map { options.optString(it) }
+                options = (0 until options.length()).map { options.optString(it) },
+                translationReverse = item.optString("kind") == "write"
             )
         }
     }
-    return result
+    val translationJson = context.assets.open("word-translations.json").bufferedReader().use { it.readText() }
+    val translationRoot = JSONObject(translationJson)
+    val translations = mutableMapOf<String, Map<String, String>>()
+    val translationKeys = translationRoot.keys()
+    while (translationKeys.hasNext()) {
+        val key = translationKeys.next()
+        val words = translationRoot.optJSONObject(key) ?: continue
+        val entries = mutableMapOf<String, String>()
+        val wordKeys = words.keys()
+        while (wordKeys.hasNext()) {
+            val word = wordKeys.next()
+            entries[word] = words.optString(word)
+        }
+        translations[key] = entries
+    }
+    return ExerciseBank(result, translations)
 }
 private fun normalizeAnswer(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
     .replace(Regex("\\p{Mn}+"), "")

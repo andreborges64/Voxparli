@@ -1,3 +1,5 @@
+import './local-bank.js';
+
 // Idiomas, níveis e escalas usados pelos cursos.
 const LANGS=[{id:'en',name:'Inglês',flag:'🇬🇧',native:'English'},{id:'es',name:'Espanhol',flag:'🇪🇸',native:'Español'},{id:'it',name:'Italiano',flag:'🇮🇹',native:'Italiano'},{id:'fr',name:'Francês',flag:'🇫🇷',native:'Français'},{id:'de',name:'Alemão',flag:'🇩🇪',native:'Deutsch'},{id:'zh',name:'Mandarim',flag:'🇨🇳',native:'中文'},{id:'ja',name:'Japonês',flag:'🇯🇵',native:'日本語'},{id:'ru',name:'Russo',flag:'🇷🇺',native:'Русский'},{id:'el',name:'Grego',flag:'🇬🇷',native:'Ελληνικά'},{id:'ko',name:'Coreano',flag:'🇰🇷',native:'한국어'},{id:'la',name:'Latim',flag:'🏛️',native:'Lingua Latina'},{id:'nb',name:'Norueguês',flag:'🇳🇴',native:'Norsk (bokmål)'},{id:'nl',name:'Holandês',flag:'🇳🇱',native:'Nederlands'},{id:'sv',name:'Sueco',flag:'🇸🇪',native:'Svenska'},{id:'da',name:'Dinamarquês',flag:'🇩🇰',native:'Dansk'}];
 const LEVELS=['A1','A2','B1','B2','C1','C2'];
@@ -90,7 +92,7 @@ function renderLessonPrompt(root,ls,exercise,baseEx){
  root.oninput=closeOnOtherInteraction;
  root.onchange=closeOnOtherInteraction;
  root.onfocusin=closeOnOtherInteraction;
- const parts=String(exercise.prompt).match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[\p{L}\p{M}]+(?:['’\-][\p{L}\p{M}]+)*|[^\p{L}\p{M}]+/gu)||[];
+ const parts=String(exercise.prompt).match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|[\p{L}\p{M}]+(?:['’\-][\p{L}\p{M}]+)*|[^\p{L}\p{M}]+/gu)||[];
  for(const part of parts){
   if(!/^[\p{L}\p{M}]/u.test(part)){prompt.append(document.createTextNode(part));continue}
   const button=document.createElement('button');
@@ -103,12 +105,11 @@ function renderLessonPrompt(root,ls,exercise,baseEx){
    activeWord=part;
    const reverse=baseEx.kind==='write';
    const wordTranslation=window.voxparliLocalBank.translateWord(ls.lang,part,bankLevel(ls.lang,currentLevel(ls.lang)),reverse);
-   const sentenceTranslation=baseEx.correct;
    const label=document.createElement('span');
    label.className='word-translation-label';
-   label.textContent=wordTranslation?'Tradução de':'No contexto';
+   label.textContent=`Tradução de “${part}”`;
    const value=document.createElement('strong');
-   value.textContent=wordTranslation||sentenceTranslation||'Tradução indisponível';
+   value.textContent=wordTranslation||'Tradução indisponível para esta palavra.';
    hint.replaceChildren(label,value);
    hint.hidden=false;
   });

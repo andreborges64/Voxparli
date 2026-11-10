@@ -13,13 +13,28 @@ const bands = {
 const levels = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 // Gera as questões de cada curso e faixa compatível.
 const bank = {};
+const wordTranslations = {};
 for (const language of languages) {
   for (const level of new Set(bands[language] || levels)) {
-    bank[`${language}:${level}`] = window.voxparliLocalBank.catalog(language, level);
+    const key = `${language}:${level}`;
+    bank[key] = window.voxparliLocalBank.catalog(language, level);
+    for (const exercise of bank[key]) {
+      const reverse = exercise.kind === 'write';
+      const translationsKey = reverse ? `${key}:reverse` : key;
+      const translations = wordTranslations[translationsKey] ||= {};
+      const words = exercise.prompt.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|[\p{L}\p{M}]+(?:['’\-][\p{L}\p{M}]+)*/gu) || [];
+      for (const word of words) {
+        const translation = window.voxparliLocalBank.translateWord(language, word, level, reverse);
+        if (translation) translations[window.voxparliLocalBank.normalize(word)] = translation;
+      }
+    }
   }
 }
 // Grava o banco no diretório de recursos Android.
-const output = path.join(__dirname, '..', 'android-native', 'app', 'src', 'main', 'assets', 'question-bank.json');
-fs.mkdirSync(path.dirname(output), { recursive: true });
-fs.writeFileSync(output, `${JSON.stringify(bank)}\n`);
-console.log(`Exported ${Object.values(bank).reduce((sum, questions) => sum + questions.length, 0)} offline questions to ${output}`);
+const outputDirectory = path.join(__dirname, '..', 'android-native', 'app', 'src', 'main', 'assets');
+fs.mkdirSync(outputDirectory, { recursive: true });
+const questionOutput = path.join(outputDirectory, 'question-bank.json');
+const translationOutput = path.join(outputDirectory, 'word-translations.json');
+fs.writeFileSync(questionOutput, `${JSON.stringify(bank)}\n`);
+fs.writeFileSync(translationOutput, `${JSON.stringify(wordTranslations)}\n`);
+console.log(`Exported ${Object.values(bank).reduce((sum, questions) => sum + questions.length, 0)} offline questions and ${Object.values(wordTranslations).reduce((sum, words) => sum + Object.keys(words).length, 0)} word translations.`);
