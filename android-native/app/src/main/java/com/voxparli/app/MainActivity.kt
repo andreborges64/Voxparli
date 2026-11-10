@@ -173,7 +173,8 @@ private data class Course(
     val languageId: String,
     val levelIndex: Int,
     val levelStartDone: Int,
-    val placementCompleted: Boolean = false
+    val placementCompleted: Boolean = false,
+    val unlockedLevelIndex: Int = 0
 )
 private data class Exercise(
     val id: String,
@@ -393,9 +394,13 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             if (courseIndex >= 0) {
                 val course = nextCourses[courseIndex]
                 val levelCount = levelsFor(session.languageId).size
-                val advanced = course.placementCompleted && done - course.levelStartDone >= 1200 && course.levelIndex < levelCount - 1
+                val advanced = done - course.levelStartDone >= 1200 && course.levelIndex < levelCount - 1
                 nextCourses[courseIndex] = if (advanced) {
-                    course.copy(levelIndex = course.levelIndex + 1, levelStartDone = done)
+                    course.copy(
+                        levelIndex = course.levelIndex + 1,
+                        levelStartDone = done,
+                        unlockedLevelIndex = maxOf(course.unlockedLevelIndex, course.levelIndex + 1)
+                    )
                 } else course
             }
             updateState { current ->
@@ -627,11 +632,20 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
                                 val existingIndex = appState.courses.indexOfFirst { it.languageId == languageId }
                                 val nextCourses = appState.courses.toMutableList()
                                 val startDone = appState.doneCounts[languageId] ?: 0
-                                if (existingIndex < 0) nextCourses.add(Course(languageId, levelIndex, startDone, placementCompleted = true))
+                                if (existingIndex < 0) nextCourses.add(
+                                    Course(
+                                        languageId,
+                                        levelIndex,
+                                        startDone,
+                                        placementCompleted = true,
+                                        unlockedLevelIndex = levelsFor(languageId).lastIndex
+                                    )
+                                )
                                 else nextCourses[existingIndex] = nextCourses[existingIndex].copy(
                                     levelIndex = levelIndex,
                                     levelStartDone = startDone,
-                                    placementCompleted = true
+                                    placementCompleted = true,
+                                    unlockedLevelIndex = levelsFor(languageId).lastIndex
                                 )
                                 updateState { it.copy(courses = nextCourses) }
                                 placement = null
@@ -664,7 +678,7 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             LevelPickerDialog(
                 languageId = languageToEdit,
                 selectedIndex = course.levelIndex,
-                placementCompleted = course.placementCompleted,
+                unlockedLevelIndex = course.unlockedLevelIndex,
                 onDismiss = { levelPickerLanguage = null },
                 onSelect = { levelIndex ->
                     val nextCourses = appState.courses.map {
@@ -1271,7 +1285,7 @@ private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -
 private fun LevelPickerDialog(
     languageId: String,
     selectedIndex: Int,
-    placementCompleted: Boolean,
+    unlockedLevelIndex: Int,
     onDismiss: () -> Unit,
     onSelect: (Int) -> Unit
 ) {
@@ -1281,11 +1295,11 @@ private fun LevelPickerDialog(
         title = { Text("Nível de ${language.name}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                if (!placementCompleted) {
-                    Text("Faça o nivelamento para liberar os outros níveis.", color = Muted, fontSize = 12.sp)
+                if (unlockedLevelIndex < levelsFor(languageId).lastIndex) {
+                    Text("Conclua este nível para liberar o próximo ou faça o nivelamento para liberar todos.", color = Muted, fontSize = 12.sp)
                 }
                 levelsFor(languageId).forEachIndexed { index, level ->
-                    val enabled = placementCompleted || index == 0
+                    val enabled = index <= unlockedLevelIndex
                     TextButton(onClick = { onSelect(index) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
                         Text(
                             if (index == selectedIndex) "✓  $level" else level,
@@ -1408,6 +1422,7 @@ private object AppStateStore {
                 put("level", levelName(course.languageId, course.levelIndex))
                 put("levelStartDone", course.levelStartDone)
                 put("placementCompleted", course.placementCompleted)
+                put("unlockedLevelIndex", course.unlockedLevelIndex)
                 put("unit", "Olá! Prazer em conhecer")
             })
         }
@@ -1452,11 +1467,15 @@ private object AppStateStore {
                 ?: if (levels.size == 6) oldBand else floor(oldBand * (levels.lastIndex / 5.0)).toInt()
             val safeIndex = mappedIndex.coerceIn(0, levels.lastIndex)
             val placementCompleted = item.optBoolean("placementCompleted", safeIndex > 0)
+            val unlockedLevelIndex = if (placementCompleted) levels.lastIndex else {
+                item.optInt("unlockedLevelIndex", safeIndex).coerceIn(0, levels.lastIndex)
+            }
             Course(
                 languageId,
-                if (placementCompleted) safeIndex else 0,
+                safeIndex.coerceAtMost(unlockedLevelIndex),
                 item.optInt("levelStartDone", 0),
-                placementCompleted
+                placementCompleted,
+                unlockedLevelIndex
             )
         }.distinctBy { it.languageId }
         val doneJson = data.optJSONObject("done") ?: JSONObject()
