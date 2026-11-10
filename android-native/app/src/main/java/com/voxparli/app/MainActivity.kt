@@ -804,6 +804,7 @@ private fun clickablePrompt(value: String): AnnotatedString {
         append(value.substring(cursor))
     }
 }
+@Composable
 private fun LessonPage(
     session: LessonSession,
     appState: AppState,
