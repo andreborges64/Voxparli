@@ -132,7 +132,7 @@ function showLesson(){
  const ls=lessonState,level=currentLevel(ls.lang),ex=ls.questions[ls.idx],lang=LANGS.find(l=>l.id===ls.lang);
  let root=document.querySelector('#modal-root');
  if(ls.idx>=ls.questions.length){
-  if(!ls.reviewMode){const firstDone=countDone(ls.lang);for(let i=0;i<ls.initialQuestionCount;i++)state.done[`${ls.lang}:${firstDone+i}`]=1;if(ls.aiItems){let key=`${ls.lang}:${level}`;state.aiPacks[key]=(state.aiPacks[key]||[]).slice(10)}state.streak=Math.max(1,state.streak);let total=countDone(ls.lang);const course=courseData(ls.lang),courseLevels=levelsFor(ls.lang),levelIndex=courseLevels.indexOf(level);if(total-(course.levelStartDone||0)>=1200&&levelIndex<courseLevels.length-1){course.level=courseLevels[levelIndex+1];course.levelStartDone=total}save()}
+  if(!ls.reviewMode){const firstDone=countDone(ls.lang);for(let i=0;i<ls.initialQuestionCount;i++)state.done[`${ls.lang}:${firstDone+i}`]=1;if(ls.aiItems){let key=`${ls.lang}:${level}`;state.aiPacks[key]=(state.aiPacks[key]||[]).slice(10)}state.streak=Math.max(1,state.streak);let total=countDone(ls.lang);const course=courseData(ls.lang),courseLevels=levelsFor(ls.lang),levelIndex=courseLevels.indexOf(level);if(course.placementCompleted&&total-(course.levelStartDone||0)>=1200&&levelIndex<courseLevels.length-1){course.level=courseLevels[levelIndex+1];course.levelStartDone=total}save()}
   root.innerHTML=`<div class="lesson-overlay"><div class="lesson-modal" style="text-align:center;padding:35px"><div style="font-size:51px">${ls.score>=7?'🎉':'🌟'}</div><div class="eyebrow" style="margin-top:12px">LIÇÃO CONCLUÍDA</div><h2 style="font:800 24px Manrope">${ls.score>=7?'Muito bem!':'Bom trabalho!'}</h2><p style="font-size:13px;color:var(--muted)">Você acertou ${ls.score} de ${ls.questions.length} tentativas.${!ls.reviewMode?' Seu progresso foi salvo.':''}</p><button class="primary-btn" data-close style="margin-top:12px">Continuar</button></div></div>`;
   root.querySelector('[data-close]').onclick=()=>{clearLessonPromptEvents(root);root.innerHTML='';activeLesson=null;home()};
   return;
@@ -154,4 +154,86 @@ function showLesson(){
  root.querySelector('[data-action="next"]')?.addEventListener('click',()=>{if(!ls.answerCorrect){const retry=oralExercise?{...baseEx,kind:'speak',correct:baseEx.prompt,options:[]}:baseEx;ls.questions.push(retry)}ls.idx++;ls.selected=null;ls.checked=false;ls.answerCorrect=false;ls.heard='';ls.speechMessage='';showLesson()});
 }
 function toast(msg){let t=document.querySelector('#toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
+for(const course of state.courses){
+ if(typeof course.placementCompleted!=='boolean')course.placementCompleted=levelsFor(course.lang).indexOf(course.level)>0;
+ if(!course.placementCompleted)course.level=levelsFor(course.lang)[0];
+}
+createPlacementQuestions=function(lang,noMicrophone=false){
+ const levels=levelsFor(lang),baseLength=Math.max(8,levels.length),questions=[];
+ for(let index=0;index<baseLength;index++){
+  const placementLevel=Math.min(levels.length-1,Math.floor(index*levels.length/baseLength)),level=levels[placementLevel],question=exercise(lang,level,index+8);
+  if(!question.correct||!question.prompt)throw new Error(`Não foi possível preparar o teste de ${LANGS.find(l=>l.id===lang)?.name||lang}.`);
+  questions.push({...question,id:`${question.id||'placement'}-${index}`,placementLevel},{...reversePlacementExercise(question,lang,level,index),placementLevel});
+ }
+ const additionalCount=baseLength*2;
+ for(let index=0;index<additionalCount;index++){
+  const placementLevel=Math.min(levels.length-1,Math.floor((index+baseLength)*levels.length/additionalCount)),question=exercise(lang,levels[placementLevel],index+baseLength+8);
+  if(!question.correct||!question.prompt)throw new Error(`Não foi possível preparar o teste de ${LANGS.find(l=>l.id===lang)?.name||lang}.`);
+  questions.push(!noMicrophone&&index<8
+   ?{...question,id:`${question.id||'placement'}-speak-${index}`,kind:'placement-speak',correct:question.prompt,options:[],placementLevel}
+   :{...question,id:`${question.id||'placement'}-extra-${index}`,placementLevel});
+ }
+ return questions;
+};
+placement=function(){
+ if(!quiz||!quiz.started){
+  const lang=LANGS.find(l=>l.id===quiz?.lang)||LANGS[0],noMicrophone=!!quiz?.noMicrophone;
+  content.innerHTML=`<div class="view-heading"><div><div class="eyebrow">NIVELAMENTO</div><h1>Descubra seu nível</h1><p>O resultado libera todos os níveis para você escolher por onde começar.</p></div></div><div class="placement-card"><label class="select-label" for="quiz-lang">Idioma do teste</label><select class="select-control" id="quiz-lang">${LANGS.map(l=>`<option value="${l.id}" ${l.id===lang.id?'selected':''}>${l.flag} ${l.name}</option>`).join('')}</select><label class="audio-setting"><input type="checkbox" id="quiz-no-microphone" ${noMicrophone?'checked':''}> Não posso usar microfone agora</label><p>${noMicrophone?'Serão usadas outras questões no lugar das perguntas faladas.':'O teste inclui oito questões para responder falando no idioma.'} O total de questões será o dobro do teste atual.</p><button class="primary-btn" data-action="quiz-start">Começar teste</button></div>`;
+  wireActions();return;
+ }
+ const lang=LANGS.find(l=>l.id===quiz.lang),quizLength=quiz.questions.length;
+ if(quiz.idx>=quizLength){
+  const score=quiz.answers.filter(Boolean).length,level=levelsFor(quiz.lang)[Math.min(levelsFor(quiz.lang).length-1,Math.floor(score*levelsFor(quiz.lang).length/quizLength))];
+  content.innerHTML=`<div class="view-heading"><div><div class="eyebrow">NIVELAMENTO CONCLUÍDO</div><h1>Seu ponto de partida</h1><p>Com base nas suas respostas, sugerimos um nível para começar.</p></div></div><div class="placement-card"><div style="font-size:35px">${lang.flag}</div><h2>${level} — ${score}/${quizLength} respostas corretas</h2><p>Ao continuar, todos os níveis serão liberados. Você pode alterar sua escolha depois.</p><button class="primary-btn" data-action="apply-level" data-lang="${lang.id}" data-level="${level}">Começar no ${level} →</button> <button class="secondary-btn" data-action="restart-quiz">Refazer teste</button></div>`;
+  wireActions();return;
+ }
+ const question=quiz.questions[quiz.idx],level=levelsFor(quiz.lang)[question.placementLevel??0],speaking=question.kind==='placement-speak';
+ if(!speaking&&quiz.audioIdx!==quiz.idx){quiz.audioIdx=quiz.idx;speak(question.prompt,quiz.lang)}
+ content.innerHTML=`<div class="view-heading"><div><div class="eyebrow">NIVELAMENTO · QUESTÃO ${quiz.idx+1} DE ${quizLength}</div><h1>Descubra seu nível</h1><p>${speaking?`Fale a frase em ${lang.name}.`:question.kind==='placement-reverse'?`Enunciado em português: escolha a opção correta em ${lang.name}.`:`O teste usa questões em ${lang.name} e a escala ${scaleName(quiz.lang)}. Responda sem consultar materiais.`}</p></div></div><div class="placement-card"><div class="quiz-progress"><span style="width:${quiz.idx/quizLength*100}%"></span></div><div class="eyebrow">${level}</div><div class="quiz-question">${esc(question.prompt)}</div>${speaking?`<div class="speaking-panel"><button class="primary-btn" data-action="quiz-speak">🎙 Falar agora</button><p>${esc(quiz.selected||'')}</p><small>${esc(quiz.speechMessage||'')}</small></div>`:`<div class="answer-list">${question.options.map(answer=>`<button class="answer-option ${quiz.selected===answer?'selected':''}" data-answer="${esc(answer)}">${esc(answer)}</button>`).join('')}</div>`}<div class="quiz-foot"><span class="quiz-feedback">${quiz.selected?'Resposta registrada':''}</span><button class="primary-btn" data-action="quiz-next" ${quiz.selected?'':'disabled'}>${quiz.idx===quizLength-1?'Ver resultado':'Continuar →'}</button></div></div>`;
+ content.querySelectorAll('[data-answer]').forEach(button=>button.onclick=()=>{quiz.selected=button.dataset.answer;quiz.correct=button.dataset.answer===question.correct;placement()});
+ wireActions();
+};
+const originalWireActions=wireActions;
+wireActions=function(){
+ originalWireActions();
+ content.querySelectorAll('[data-action="add-lang"]').forEach(button=>button.addEventListener('click',event=>{
+  const course=courseData(event.currentTarget.dataset.lang);
+  if(course&&typeof course.placementCompleted!=='boolean'){course.placementCompleted=false;save()}
+ }));
+ content.querySelector('[data-action="quiz-start"]')?.addEventListener('click',()=>{
+  const lang=content.querySelector('#quiz-lang').value,noMicrophone=content.querySelector('#quiz-no-microphone').checked;
+  try{quiz={lang,noMicrophone,idx:0,answers:[],selected:null,questions:createPlacementQuestions(lang,noMicrophone),started:true};placement()}
+  catch(error){toast(error.message||'Não foi possível preparar o teste de nível.')}
+ });
+ content.querySelector('[data-action="quiz-speak"]')?.addEventListener('click',()=>{
+  const current=quiz,index=quiz.idx,question=current.questions[index];current.speechMessage='Escutando…';placement();
+  recognizeSpeech(question.prompt,current.lang,(heard,correct)=>{
+   if(quiz!==current||quiz.idx!==index)return;
+   current.selected=heard;current.correct=correct;current.speechMessage=correct?'Fala reconhecida!':'Não coincidiu com a frase.';placement();
+  },message=>{if(quiz===current&&quiz.idx===index){current.speechMessage=message;placement()}});
+ });
+ content.querySelector('[data-action="apply-level"]')?.addEventListener('click',button=>{
+  const course=courseData(button.currentTarget.dataset.lang),lang=button.currentTarget.dataset.lang;
+  if(course)course.placementCompleted=true;
+  else state.courses.push({lang,level:button.currentTarget.dataset.level,levelStartDone:countDone(lang),placementCompleted:true,unit:'Olá! Prazer em conhecer'});
+  save();courses();
+ });
+};
+const originalHome=home;
+home=function(){
+ originalHome();
+ const language=state.courses[0]?.lang||'en',course=courseData(language);
+ if(!course)return;
+ content.querySelectorAll('.levels-card .level-chip').forEach((chip,index)=>{
+  if(!course.placementCompleted&&index>0){
+   chip.classList.add('locked');chip.textContent=`🔒 ${chip.textContent}`;chip.title='Faça o nivelamento para liberar este nível.';return;
+  }
+  if(course.placementCompleted){
+   chip.setAttribute('role','button');chip.tabIndex=0;chip.title=`Selecionar ${levelsFor(language)[index]}`;chip.style.cursor='pointer';
+   const selectLevel=()=>{const level=levelsFor(language)[index];if(course.level!==level){course.level=level;course.levelStartDone=countDone(language);save();home()}};
+   chip.addEventListener('click',selectLevel);
+   chip.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();selectLevel()}});
+  }
+ });
+};
 render();if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));

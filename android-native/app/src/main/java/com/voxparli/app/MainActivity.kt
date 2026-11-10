@@ -109,11 +109,11 @@ import java.util.Locale
 import kotlin.math.floor
 // Paleta de cores da interface nativa.
 private val Ink = Color(0xFF33204F)
-private val Leaf = Color(0xFF347567)
-private val LeafDark = Color(0xFF24594F)
-private val SoftGreen = Color(0xFFE7F1EB)
-private val Gold = Color(0xFFE4AE4F)
-private val GoldDark = Color(0xFF8A5E16)
+private val Leaf = Color(0xFF7041C8)
+private val LeafDark = Color(0xFF552D9A)
+private val SoftGreen = Color(0xFFF0E9FC)
+private val Gold = Color(0xFFEFB84E)
+private val GoldDark = Color(0xFF33204F)
 private val Paper = Color(0xFFF0E8F8)
 private val Muted = Color(0xFF7E718F)
 private val Line = Color(0xFFD8C8EA)
@@ -169,7 +169,12 @@ private val CourseBands = mapOf(
     "ja" to listOf("A1", "A2", "B1", "B2", "C1"),
     "ko" to listOf("A1", "A2", "B1", "B2", "C1", "C2")
 )
-private data class Course(val languageId: String, val levelIndex: Int, val levelStartDone: Int)
+private data class Course(
+    val languageId: String,
+    val levelIndex: Int,
+    val levelStartDone: Int,
+    val placementCompleted: Boolean = false
+)
 private data class Exercise(
     val id: String,
     val prompt: String,
@@ -198,7 +203,8 @@ private data class PlacementSession(
     val questions: List<Exercise>,
     val index: Int = 0,
     val selected: String = "",
-    val score: Int = 0
+    val score: Int = 0,
+    val speechMessage: String = ""
 )
 private data class AppState(
     val profileName: String = "",
@@ -268,6 +274,7 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
     var lesson by remember { mutableStateOf<LessonSession?>(null) }
     var placement by remember { mutableStateOf<PlacementSession?>(null) }
     var placementLanguage by rememberSaveable { mutableStateOf("en") }
+    var placementNoMicrophone by rememberSaveable { mutableStateOf(false) }
     var profileOpen by remember { mutableStateOf(false) }
     var levelPickerLanguage by remember { mutableStateOf<String?>(null) }
     var reviewLanguage by rememberSaveable { mutableStateOf("") }
@@ -317,11 +324,13 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
         }
         lesson = LessonSession(languageId, questions, reviewMode)
     }
-    fun beginPlacement(languageId: String) {
+    fun beginPlacement(languageId: String, noMicrophone: Boolean) {
         val courseLevels = levelsFor(languageId)
+        val baseLength = maxOf(8, courseLevels.size)
+        val additionalCount = baseLength * 2
         val questions = mutableListOf<Exercise>()
-        repeat(8) { index ->
-            val levelIndex = (index * courseLevels.size / 8).coerceIn(0, courseLevels.lastIndex)
+        repeat(baseLength) { index ->
+            val levelIndex = (index * courseLevels.size / baseLength).coerceIn(0, courseLevels.lastIndex)
             val pool = bank["$languageId:${courseBand(languageId, levelIndex)}"].orEmpty()
                 .filter { it.options.size >= 2 && it.kind in setOf("translate", "read") }
             val question = pool.randomOrNull()
@@ -338,7 +347,7 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
                 notify("Não foi possível preparar alternativas para o teste de nível.")
                 return
             }
-            questions += question
+            questions += question.copy(id = "${question.id}-placement-$index")
             questions += question.copy(
                 id = "${question.id}-placement-reverse-$index",
                 prompt = question.correct,
@@ -347,7 +356,27 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
                 options = (alternatives + question.prompt).shuffled()
             )
         }
-        if (questions.size < 16) {
+        repeat(additionalCount) { index ->
+            val levelIndex = ((index + baseLength) * courseLevels.size / additionalCount).coerceIn(0, courseLevels.lastIndex)
+            val pool = bank["$languageId:${courseBand(languageId, levelIndex)}"].orEmpty()
+                .filter { it.options.size >= 2 && it.kind in setOf("translate", "read") }
+            val question = pool.randomOrNull()
+            if (question == null) {
+                notify("Não foi possível preparar o teste de nível.")
+                return
+            }
+            questions += if (!noMicrophone && index < 8) {
+                question.copy(
+                    id = "${question.id}-placement-speak-$index",
+                    correct = question.prompt,
+                    kind = "placement-speak",
+                    options = emptyList()
+                )
+            } else {
+                question.copy(id = "${question.id}-placement-extra-$index")
+            }
+        }
+        if (questions.size < baseLength * 4) {
             notify("Não foi possível preparar o teste de nível.")
             return
         }
@@ -364,8 +393,10 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             if (courseIndex >= 0) {
                 val course = nextCourses[courseIndex]
                 val levelCount = levelsFor(session.languageId).size
-                val advanced = done - course.levelStartDone >= 1200 && course.levelIndex < levelCount - 1
-                nextCourses[courseIndex] = if (advanced) Course(session.languageId, course.levelIndex + 1, done) else course
+                val advanced = course.placementCompleted && done - course.levelStartDone >= 1200 && course.levelIndex < levelCount - 1
+                nextCourses[courseIndex] = if (advanced) {
+                    course.copy(levelIndex = course.levelIndex + 1, levelStartDone = done)
+                } else course
             }
             updateState { current ->
                 current.copy(
@@ -416,7 +447,19 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
     val speechPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val session = lesson
         val activity = context as? Activity
-        if (granted && session != null && activity != null) {
+        val placementSession = placement
+        if (granted && placementSession != null && session == null && activity != null) {
+            val question = placementSession.questions.getOrNull(placementSession.index) ?: return@rememberLauncherForActivityResult
+            if (question.kind != "placement-speak") return@rememberLauncherForActivityResult
+            placement = placementSession.copy(speechMessage = "Escutando…")
+            startSpeechRecognition(activity, placementSession.languageId,
+                onResult = { heard ->
+                    val current = placement ?: return@startSpeechRecognition
+                    placement = current.copy(selected = heard, speechMessage = "Resposta reconhecida.")
+                },
+                onFailure = { message -> placement = placement?.copy(speechMessage = message) }
+            )
+        } else if (granted && session != null && activity != null) {
             lesson = session.copy(speechMessage = "Escutando…")
             startSpeechRecognition(activity, session.languageId,
                 onResult = { heard ->
@@ -432,6 +475,8 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
                 },
                 onFailure = { message -> lesson = lesson?.copy(speechMessage = message) }
             )
+        } else if (!granted && placementSession != null && session == null) {
+            placement = placement?.copy(speechMessage = "Permita o acesso ao microfone para responder.")
         } else if (!granted) {
             lesson = lesson?.copy(speechMessage = "Permita o acesso ao microfone para praticar fala.")
         }
@@ -560,11 +605,21 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
                             session = placement,
                             selectedLanguage = placementLanguage,
                             onLanguage = { placementLanguage = it },
-                            onStart = { beginPlacement(placementLanguage) },
+                            noMicrophone = placementNoMicrophone,
+                            onNoMicrophoneChange = { placementNoMicrophone = it },
+                            onStart = { beginPlacement(placementLanguage, placementNoMicrophone) },
                             onSelect = { value -> placement = placement?.copy(selected = value) },
+                            onSpeech = {
+                                speechPermission.launch(Manifest.permission.RECORD_AUDIO)
+                            },
                             onNext = {
                                 val current = placement ?: return@PlacementPage
-                                val correct = current.questions[current.index].correct == current.selected
+                                val question = current.questions[current.index]
+                                val correct = if (question.kind == "placement-speak") {
+                                    normalizeAnswer(current.selected) == normalizeAnswer(question.prompt)
+                                } else {
+                                    question.correct == current.selected
+                                }
                                 placement = current.copy(index = current.index + 1, selected = "", score = current.score + if (correct) 1 else 0)
                             },
                             onRestart = { placement = null },
@@ -572,8 +627,12 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
                                 val existingIndex = appState.courses.indexOfFirst { it.languageId == languageId }
                                 val nextCourses = appState.courses.toMutableList()
                                 val startDone = appState.doneCounts[languageId] ?: 0
-                                if (existingIndex < 0) nextCourses.add(Course(languageId, levelIndex, startDone))
-                                else nextCourses[existingIndex] = Course(languageId, levelIndex, startDone)
+                                if (existingIndex < 0) nextCourses.add(Course(languageId, levelIndex, startDone, placementCompleted = true))
+                                else nextCourses[existingIndex] = nextCourses[existingIndex].copy(
+                                    levelIndex = levelIndex,
+                                    levelStartDone = startDone,
+                                    placementCompleted = true
+                                )
                                 updateState { it.copy(courses = nextCourses) }
                                 placement = null
                                 page = Page.COURSES
@@ -605,10 +664,13 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             LevelPickerDialog(
                 languageId = languageToEdit,
                 selectedIndex = course.levelIndex,
+                placementCompleted = course.placementCompleted,
                 onDismiss = { levelPickerLanguage = null },
                 onSelect = { levelIndex ->
                     val nextCourses = appState.courses.map {
-                        if (it.languageId == languageToEdit) Course(it.languageId, levelIndex, appState.doneCounts[languageToEdit] ?: 0) else it
+                        if (it.languageId == languageToEdit) {
+                            it.copy(levelIndex = levelIndex, levelStartDone = appState.doneCounts[languageToEdit] ?: 0)
+                        } else it
                     }
                     updateState { it.copy(courses = nextCourses) }
                     levelPickerLanguage = null
@@ -763,24 +825,41 @@ private fun PlacementPage(
     session: PlacementSession?,
     selectedLanguage: String,
     onLanguage: (String) -> Unit,
+    noMicrophone: Boolean,
+    onNoMicrophoneChange: (Boolean) -> Unit,
     onStart: () -> Unit,
     onSelect: (String) -> Unit,
+    onSpeech: () -> Unit,
     onNext: () -> Unit,
     onRestart: () -> Unit,
     onApply: (String, Int) -> Unit
 ) {
     val language = Languages.find { it.id == (session?.languageId ?: selectedLanguage) } ?: Languages.first()
     val levels = levelsFor(language.id)
+    val baseQuestionCount = maxOf(8, levels.size) * 2
+    val totalQuestionCount = baseQuestionCount * 2
     val completed = session != null && session.index >= session.questions.size
     LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { PageHeader("NIVELAMENTO", "Descubra seu nível", "16 questões: oito no idioma escolhido e oito enunciados em português para selecionar a opção correta no idioma.") }
+        item {
+            val description = if (noMicrophone) {
+                "$totalQuestionCount questões para avaliar seu conhecimento, sem usar o microfone."
+            } else {
+                "$totalQuestionCount questões para avaliar seu conhecimento; oito respostas serão faladas no idioma."
+            }
+            PageHeader("NIVELAMENTO", "Descubra seu nível", description)
+        }
         if (session == null) {
             item { LanguageChooser(selectedLanguage, onLanguage) }
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Line), shape = RoundedCornerShape(16.dp)) {
                     Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Teste de nível", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        Text("Responda a 16 questões: oito no idioma escolhido e oito em português para escolher a frase correta no idioma. O resultado sugere um nível inicial.", color = Muted)
+                        Text(
+                            if (noMicrophone) "Responda a $totalQuestionCount questões de múltipla escolha. O resultado libera todos os níveis para você escolher por onde começar."
+                            else "Responda a $totalQuestionCount questões. Oito pedem que você fale no idioma; as demais são de múltipla escolha. O resultado libera todos os níveis.",
+                            color = Muted
+                        )
+                        SettingSwitch("Não posso usar microfone agora", noMicrophone, onNoMicrophoneChange)
                         Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) { Text("Começar teste") }
                     }
                 }
@@ -812,8 +891,17 @@ private fun PlacementPage(
                             Text("Enunciado em português: escolha a opção correta em ${language.name}.", color = Muted, fontSize = 13.sp)
                         }
                         Text(question.prompt, fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                        question.options.forEach { option ->
-                            AnswerOption(option, selected = session.selected == option, correct = false, enabled = true) { onSelect(option) }
+                        if (question.kind == "placement-speak") {
+                            Text("Fale esta frase em ${language.name}.", color = Muted, fontSize = 13.sp)
+                            Button(onClick = onSpeech, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Filled.Mic, null); Spacer(Modifier.width(8.dp)); Text("Falar agora")
+                            }
+                            if (session.selected.isNotBlank()) Text("Você disse: ${session.selected}", color = LeafDark)
+                            if (session.speechMessage.isNotBlank()) Text(session.speechMessage, color = Muted, fontSize = 13.sp)
+                        } else {
+                            question.options.forEach { option ->
+                                AnswerOption(option, selected = session.selected == option, correct = false, enabled = true) { onSelect(option) }
+                            }
                         }
                         Button(onClick = onNext, enabled = session.selected.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                             Text(if (session.index == session.questions.lastIndex) "Ver resultado" else "Continuar")
@@ -1180,16 +1268,30 @@ private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -
 }
 // Configuração do nível do curso.
 @Composable
-private fun LevelPickerDialog(languageId: String, selectedIndex: Int, onDismiss: () -> Unit, onSelect: (Int) -> Unit) {
+private fun LevelPickerDialog(
+    languageId: String,
+    selectedIndex: Int,
+    placementCompleted: Boolean,
+    onDismiss: () -> Unit,
+    onSelect: (Int) -> Unit
+) {
     val language = Languages.find { it.id == languageId } ?: Languages.first()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Nível de ${language.name}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                if (!placementCompleted) {
+                    Text("Faça o nivelamento para liberar os outros níveis.", color = Muted, fontSize = 12.sp)
+                }
                 levelsFor(languageId).forEachIndexed { index, level ->
-                    TextButton(onClick = { onSelect(index) }, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (index == selectedIndex) "✓  $level" else level, modifier = Modifier.fillMaxWidth(), color = if (index == selectedIndex) LeafDark else Ink)
+                    val enabled = placementCompleted || index == 0
+                    TextButton(onClick = { onSelect(index) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            if (index == selectedIndex) "✓  $level" else level,
+                            modifier = Modifier.fillMaxWidth(),
+                            color = if (index == selectedIndex) LeafDark else if (enabled) Ink else Muted
+                        )
                     }
                 }
             }
@@ -1305,6 +1407,7 @@ private object AppStateStore {
                 put("lang", course.languageId)
                 put("level", levelName(course.languageId, course.levelIndex))
                 put("levelStartDone", course.levelStartDone)
+                put("placementCompleted", course.placementCompleted)
                 put("unit", "Olá! Prazer em conhecer")
             })
         }
@@ -1347,7 +1450,14 @@ private object AppStateStore {
             val oldBand = CefrLevels.indexOf(savedLevel).coerceAtLeast(0)
             val mappedIndex = levels.indexOf(savedLevel).takeIf { it >= 0 }
                 ?: if (levels.size == 6) oldBand else floor(oldBand * (levels.lastIndex / 5.0)).toInt()
-            Course(languageId, mappedIndex.coerceIn(0, levels.lastIndex), item.optInt("levelStartDone", 0))
+            val safeIndex = mappedIndex.coerceIn(0, levels.lastIndex)
+            val placementCompleted = item.optBoolean("placementCompleted", safeIndex > 0)
+            Course(
+                languageId,
+                if (placementCompleted) safeIndex else 0,
+                item.optInt("levelStartDone", 0),
+                placementCompleted
+            )
         }.distinctBy { it.languageId }
         val doneJson = data.optJSONObject("done") ?: JSONObject()
         val counts = Languages.associate { language ->
