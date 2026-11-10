@@ -9,6 +9,7 @@ Voxparli reúne o curso web e um aplicativo Android nativo em Kotlin para estuda
 - Exportação e importação de um arquivo JSON com perfil, cursos, níveis, sequência e exercícios concluídos para transportar ou guardar o progresso.
 - Geração de lições novas por IA local com WebLLM na versão web; depois de ativar a IA em um curso, o botão **Continuar** gera novas questões automaticamente quando a fila daquele nível acabar.
 - Nivelamento por idioma: CEFR nos cursos europeus, HSK 1–9 no mandarim, JLPT N5–N1 no japonês, TOPIK 1–6 no coreano e etapas de leitura próprias para latim.
+- Testes de nivelamento com o dobro de questões: cada questão no idioma-alvo é seguida por uma nova questão com enunciado em português e alternativas no idioma estudado.
 - Lições de dez questões com correção, pontuação, progresso e sequência diária.
 - Palavras clicáveis nos enunciados, com balão de tradução no curso web e no aplicativo Android.
 - Revisão e trilha de unidades.
@@ -25,7 +26,7 @@ Voxparli reúne o curso web e um aplicativo Android nativo em Kotlin para estuda
 
 As lições incluem múltipla escolha e tradução ativa: em algumas questões, a pessoa recebe a frase em português e a escreve no idioma estudado. Mandarim, japonês, russo, grego e coreano também têm exercícios de leitura dos seus sistemas de escrita, com transliteração ou pronúncia em questões iniciais.
 
-Inglês, espanhol, italiano, francês e alemão usam o banco combinatório. Mandarim, japonês, russo, grego, coreano, latim, norueguês, holandês, sueco e dinamarquês têm conteúdo inicial de frases e exercícios por nível, ainda em expansão. HSK, JLPT e TOPIK são suas próprias escalas, não equivalências oficiais do CEFR; o nivelamento usa questões do próprio idioma e reinicia se a pessoa mudar a seleção durante o teste.
+Inglês, espanhol, italiano, francês e alemão usam o banco combinatório. Mandarim, japonês, russo, grego, coreano, latim, norueguês, holandês, sueco e dinamarquês têm conteúdo inicial de frases e exercícios por nível, ainda em expansão. HSK, JLPT e TOPIK são suas próprias escalas, não equivalências oficiais do CEFR; o nivelamento alterna questões no idioma-alvo com questões de enunciado em português e reinicia se a pessoa mudar a seleção durante o teste.
 
 O app Kotlin empacota o catálogo local para uso offline. Execute `node scripts/export-native-bank.cjs` depois de alterar o gerador para atualizar esse catálogo.
 
@@ -52,14 +53,14 @@ Requer Node.js 20, JDK 17 ou superior e Android SDK 35 configurado. O Gradle 8.9
 
 ```bash
 node scripts/export-native-bank.cjs
-android-native/gradlew -p android-native :app:assembleDebug
+android-native/gradlew -p android-native :app:packageVoxparliDebugApk
 ```
 
-O APK debug aparece em `android-native/app/build/outputs/apk/debug/app-debug.apk`.
+O APK debug aparece como `Voxparli.apk` em `android-native/app/build/outputs/apk/debug/`.
 
 ## Gerar APK pelo GitHub
 
-Envie este diretório para um repositório GitHub. Em **Actions**, execute **Build Kotlin APK** com `workflow_dispatch`, ou faça push na branch `main`. Ao terminar, abra a execução e baixe `voxparli-debug-apk` na seção **Artifacts**.
+Envie este diretório para um repositório GitHub. Em **Actions**, execute **Build Kotlin APK** com `workflow_dispatch`, ou faça push na branch `main`. Ao terminar, abra a execução e baixe `voxparli-apk` na seção **Artifacts**; o arquivo dentro do artefato se chama `Voxparli.apk`.
 
 ## Limites deste protótipo
 

@@ -61,6 +61,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -71,6 +72,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -106,14 +108,15 @@ import java.text.Normalizer
 import java.util.Locale
 import kotlin.math.floor
 // Paleta de cores da interface nativa.
-private val Ink = Color(0xFF20352F)
+private val Ink = Color(0xFF33204F)
 private val Leaf = Color(0xFF347567)
 private val LeafDark = Color(0xFF24594F)
 private val SoftGreen = Color(0xFFE7F1EB)
 private val Gold = Color(0xFFE4AE4F)
-private val Paper = Color(0xFFF7F8F3)
-private val Muted = Color(0xFF788781)
-private val Line = Color(0xFFE4E9E3)
+private val GoldDark = Color(0xFF8A5E16)
+private val Paper = Color(0xFFF0E8F8)
+private val Muted = Color(0xFF7E718F)
+private val Line = Color(0xFFD8C8EA)
 private val VoxparliColors = lightColorScheme(
     primary = Leaf,
     onPrimary = Color.White,
@@ -316,13 +319,35 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
     }
     fun beginPlacement(languageId: String) {
         val courseLevels = levelsFor(languageId)
-        val questions = (0 until 8).mapNotNull { index ->
+        val questions = mutableListOf<Exercise>()
+        repeat(8) { index ->
             val levelIndex = (index * courseLevels.size / 8).coerceIn(0, courseLevels.lastIndex)
-            bank["$languageId:${courseBand(languageId, levelIndex)}"].orEmpty()
-                .filter { it.options.size >= 2 }
-                .randomOrNull()
+            val pool = bank["$languageId:${courseBand(languageId, levelIndex)}"].orEmpty()
+                .filter { it.options.size >= 2 && it.kind in setOf("translate", "read") }
+            val question = pool.randomOrNull()
+            if (question == null) {
+                notify("Não foi possível preparar o teste de nível.")
+                return
+            }
+            val alternatives = pool.map { it.prompt }
+                .distinctBy(::normalizeAnswer)
+                .filterNot { normalizeAnswer(it) == normalizeAnswer(question.prompt) }
+                .shuffled()
+                .take(3)
+            if (alternatives.size < 3) {
+                notify("Não foi possível preparar alternativas para o teste de nível.")
+                return
+            }
+            questions += question
+            questions += question.copy(
+                id = "${question.id}-placement-reverse-$index",
+                prompt = question.correct,
+                correct = question.prompt,
+                kind = "placement-reverse",
+                options = (alternatives + question.prompt).shuffled()
+            )
         }
-        if (questions.size < 8) {
+        if (questions.size < 16) {
             notify("Não foi possível preparar o teste de nível.")
             return
         }
@@ -420,9 +445,11 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
     }
     MaterialTheme(colorScheme = VoxparliColors) {
         Scaffold(
+            containerColor = Paper,
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = {
                 TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Paper),
                     title = {
                         if (lesson != null) Text("Lição") else Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Voxparli", fontWeight = FontWeight.ExtraBold, color = LeafDark)
@@ -445,11 +472,18 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
             },
             bottomBar = {
                 if (lesson == null) {
-                    NavigationBar(containerColor = Color.White) {
-                        NavigationBarItem(selected = page == Page.HOME, onClick = { page = Page.HOME }, icon = { Icon(Icons.Filled.Home, null) }, label = { Text("Início") })
-                        NavigationBarItem(selected = page == Page.COURSES, onClick = { page = Page.COURSES }, icon = { Icon(Icons.Filled.Language, null) }, label = { Text("Idiomas") })
-                        NavigationBarItem(selected = page == Page.REVIEW, onClick = { page = Page.REVIEW }, icon = { Icon(Icons.Filled.Refresh, null) }, label = { Text("Revisão") })
-                        NavigationBarItem(selected = page == Page.PLACEMENT, onClick = { page = Page.PLACEMENT }, icon = { Icon(Icons.Filled.Tune, null) }, label = { Text("Nível") })
+                    NavigationBar(containerColor = Paper) {
+                        val menuColors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Ink,
+                            selectedTextColor = Ink,
+                            indicatorColor = Gold,
+                            unselectedIconColor = GoldDark,
+                            unselectedTextColor = GoldDark
+                        )
+                        NavigationBarItem(selected = page == Page.HOME, onClick = { page = Page.HOME }, icon = { Icon(Icons.Filled.Home, null) }, label = { Text("Início") }, colors = menuColors)
+                        NavigationBarItem(selected = page == Page.COURSES, onClick = { page = Page.COURSES }, icon = { Icon(Icons.Filled.Language, null) }, label = { Text("Idiomas") }, colors = menuColors)
+                        NavigationBarItem(selected = page == Page.REVIEW, onClick = { page = Page.REVIEW }, icon = { Icon(Icons.Filled.Refresh, null) }, label = { Text("Revisão") }, colors = menuColors)
+                        NavigationBarItem(selected = page == Page.PLACEMENT, onClick = { page = Page.PLACEMENT }, icon = { Icon(Icons.Filled.Tune, null) }, label = { Text("Nível") }, colors = menuColors)
                     }
                 }
             }
@@ -739,14 +773,14 @@ private fun PlacementPage(
     val levels = levelsFor(language.id)
     val completed = session != null && session.index >= session.questions.size
     LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { PageHeader("NIVELAMENTO", "Descubra seu nível", "Um ponto de partida para adaptar as próximas lições.") }
+        item { PageHeader("NIVELAMENTO", "Descubra seu nível", "16 questões: oito no idioma escolhido e oito enunciados em português para selecionar a opção correta no idioma.") }
         if (session == null) {
             item { LanguageChooser(selectedLanguage, onLanguage) }
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Line), shape = RoundedCornerShape(16.dp)) {
                     Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Teste de nível", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        Text("Responda oito questões no idioma escolhido. O resultado sugere um nível inicial.", color = Muted)
+                        Text("Responda a 16 questões: oito no idioma escolhido e oito em português para escolher a frase correta no idioma. O resultado sugere um nível inicial.", color = Muted)
                         Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) { Text("Começar teste") }
                     }
                 }
@@ -774,6 +808,9 @@ private fun PlacementPage(
                             Text("${session.index + 1} / ${session.questions.size}", color = Muted)
                         }
                         LinearProgressIndicator(progress = (session.index.toFloat() / session.questions.size), modifier = Modifier.fillMaxWidth(), color = Leaf)
+                        if (question.kind == "placement-reverse") {
+                            Text("Enunciado em português: escolha a opção correta em ${language.name}.", color = Muted, fontSize = 13.sp)
+                        }
                         Text(question.prompt, fontSize = 21.sp, fontWeight = FontWeight.Bold)
                         question.options.forEach { option ->
                             AnswerOption(option, selected = session.selected == option, correct = false, enabled = true) { onSelect(option) }

@@ -28,9 +28,9 @@ jobs:
         run: node scripts/export-native-bank.cjs
       - uses: gradle/actions/setup-gradle@v4
       - name: Build native APK
-        run: android-native/gradlew -p android-native :app:assembleDebug
+        run: android-native/gradlew -p android-native :app:packageVoxparliDebugApk
       - uses: actions/upload-artifact@v4
         with:
-          name: voxparli-debug-apk
-          path: android-native/app/build/outputs/apk/debug/app-debug.apk
+          name: voxparli-apk
+          path: android-native/app/build/outputs/apk/debug/Voxparli.apk
           retention-days: 14

@@ -2,11 +2,11 @@
     <!-- Tema claro usado pela tela nativa. -->
     <style name="Theme.Voxparli" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:statusBarColor">#F7F3FC</item>
-        <item name="android:navigationBarColor">#F7F3FC</item>
+        <item name="android:statusBarColor">#F0E8F8</item>
+        <item name="android:navigationBarColor">#F0E8F8</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#F7F3FC</item>
+        <item name="android:windowBackground">#F0E8F8</item>
     </style>
 </resources>

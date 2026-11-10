@@ -26,6 +26,12 @@ android {
         jvmTarget = "17"
     }
 }
+tasks.register<Copy>("packageVoxparliDebugApk") {
+    dependsOn("assembleDebug")
+    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+    into(layout.buildDirectory.dir("outputs/apk/debug"))
+    rename { "Voxparli.apk" }
+}
 // Bibliotecas da interface Jetpack Compose.
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.02.00"))
