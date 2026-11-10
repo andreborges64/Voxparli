@@ -60,7 +60,7 @@ O APK debug aparece como `Voxparli.apk` em `android-native/app/build/outputs/apk
 
 ## Gerar APK pelo GitHub
 
-Envie este diretório para um repositório GitHub. Em **Actions**, execute **Build Kotlin APK** com `workflow_dispatch`, ou faça push na branch `main`. Ao terminar, abra a execução e baixe `voxparli-apk` na seção **Artifacts**; o arquivo dentro do artefato se chama `Voxparli.apk`.
+Envie este diretório para um repositório GitHub. Em **Actions**, execute **Build Kotlin APK** com `workflow_dispatch`, ou faça push na branch `main`. Ao terminar, abra a execução e baixe `voxparli-apk` na seção **Artifacts**; o arquivo dentro do artefato se chama `Voxparli.apk`. O workflow também publica o APK mais recente em uma release, disponível pelo link de download na versão web.
 
 ## Limites deste protótipo
 

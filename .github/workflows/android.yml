@@ -7,6 +7,8 @@ on:
     paths:
       - '**'
       - '!README.md'
+permissions:
+  contents: write
 jobs:
   # Gera o banco offline e compila o aplicativo nativo.
   build:
@@ -34,3 +36,17 @@ jobs:
           name: voxparli-apk
           path: android-native/app/build/outputs/apk/debug/Voxparli.apk
           retention-days: 14
+      - name: Publish APK download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view apk-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload apk-latest android-native/app/build/outputs/apk/debug/Voxparli.apk --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create apk-latest android-native/app/build/outputs/apk/debug/Voxparli.apk \
+              --title "Voxparli para Android" \
+              --notes "Baixe o APK Android mais recente do Voxparli." \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --repo "$GITHUB_REPOSITORY"
+          fi
