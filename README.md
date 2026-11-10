@@ -56,7 +56,7 @@ node scripts/export-native-bank.cjs
 android-native/gradlew -p android-native :app:packageVoxparliDebugApk
 ```
 
-O APK debug aparece como `Voxparli.apk` em `android-native/app/build/outputs/apk/debug/`.
+O APK debug aparece como `Voxparli.apk` em `android-native/app/build/outputs/voxparli/`.
 
 ## Gerar APK pelo GitHub
 

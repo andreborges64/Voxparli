@@ -29,7 +29,7 @@ android {
 tasks.register<Copy>("packageVoxparliDebugApk") {
     dependsOn("assembleDebug")
     from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
-    into(layout.buildDirectory.dir("outputs/apk/debug"))
+    into(layout.buildDirectory.dir("outputs/voxparli"))
     rename { "Voxparli.apk" }
 }
 // Bibliotecas da interface Jetpack Compose.
