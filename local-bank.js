@@ -170,5 +170,29 @@
       return {...item,kind:'translate',options:shuffle([item.correct,...distractors],i+211)}
     })
   }
-  window.voxparliLocalBank={generate,normalize,catalog};
+  function translateWord(lang,word,level='A1',reverse=false){
+    const pairs=[];
+    for(const [source,pt] of people[lang]||[])pairs.push([source,pt]);
+    for(const tier of ['A1','A2','B1','B2','C1','C2']){
+      for(let verb=0;verb<(forms[lang]?.[tier]||[]).length;verb++){
+        for(let person=0;person<(forms[lang][tier][verb]||[]).length;person++)pairs.push([forms[lang][tier][verb][person],ptForms[tier][verb][person]]);
+      }
+      for(const group of ['basic','advanced']){
+        const sourceList=objects[group][lang]||[];
+        const ptList=objects[group].pt||[];
+        sourceList.forEach((source,index)=>pairs.push([source,ptList[index]]));
+      }
+      const context=contexts[contextGroup[tier]];
+      (context[lang]||[]).forEach((source,index)=>pairs.push([source,context.pt[index]]));
+      for(const [source,pt] of extraPhrases[lang]?.[tier]||[])if(source.split(/\s+/).length===1||pt.split(/\s+/).length===1)pairs.push([source,pt]);
+      if(tier===level)break;
+    }
+    const query=normalize(word);
+    const matches=pairs.flatMap(([source,target])=>{
+      const input=reverse?target:source,output=reverse?source:target;
+      return normalize(input).split(' ').includes(query)?[{input,output,length:normalize(input).split(' ').length}]:[];
+    }).sort((a,b)=>a.length-b.length);
+    return matches[0]?.output||null;
+  }
+  window.voxparliLocalBank={generate,normalize,catalog,translateWord};
 })();

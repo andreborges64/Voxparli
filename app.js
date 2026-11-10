@@ -72,6 +72,50 @@ function review(){
 async function generateAILesson(lang,automatic=false){const level=currentLevel(lang),tier=bankLevel(lang,level),key=`${lang}:${level}`,modelId='Llama-3.2-1B-Instruct-q4f16_1-MLC',language=LANGS.find(l=>l.id===lang);if(!window.voxparliLoadAI||!navigator.gpu){state.aiEnabled[lang]=false;save();if(automatic){toast('IA local indisponível neste navegador; abrindo a prática local.');startLesson(lang);return}toast('IA local precisa de um navegador compatível com WebGPU.');return}aiProgress('Na primeira utilização, baixe o modelo com internet. Depois, novas questões podem ser geradas offline.',0);try{if(!window.voxparliEngine){const {CreateMLCEngine}=await window.voxparliLoadAI();window.voxparliEngine=await CreateMLCEngine(modelId,{initProgressCallback:info=>aiProgress(info.text||'Carregando modelo local…',info.progress)})}const seen=new Set(state.aiSeen[key]||[]),base=basePromptSet(lang,level),existing=state.aiPacks[key]||[],history=state.aiHistory[key]||[],batch=[],batchPrompts=new Set([...existing.map(x=>normalizeQuestion(x.prompt)),...history.map(normalizeQuestion)]);for(let attempt=0;attempt<3&&existing.length+batch.length<10;attempt++){aiProgress(`Criando questões inéditas para ${level}… (${existing.length+batch.length}/10)`,null);const avoid=[...new Set([...base,...batchPrompts])].slice(-180).join(' | ');const response=await window.voxparliEngine.chat.completions.create({messages:[{role:'system',content:`Você escreve exercícios de idiomas com rigor pedagógico para nível ${scaleName(lang)} ${level}. Conteúdo do nível: ${levelGuide(lang,level)} Nos níveis intermediários e avançados, cerca de 20% das frases podem revisar conteúdos anteriores; as demais devem praticar o foco do nível atual. Gere somente frases naturais e corretas no idioma-alvo. Retorne apenas JSON válido: {"exercises":[{"prompt":"frase no idioma-alvo","correct":"tradução natural em português brasileiro","options":["tradução incorreta 1","tradução incorreta 2","tradução incorreta 3","tradução correta"]}]}. Gere 18 itens por resposta, com 4 alternativas distintas por item. Não use frases iguais ou muito parecidas com a lista de exclusão. Sem explicações ou markdown.`},{role:'user',content:`Idioma-alvo: ${language.name}. Nível atual: ${level}. Produza variedade real de temas, verbos, pessoas, contextos, sintaxe e vocabulário próprios desse nível. Use frases diferentes entre si e evite padrões de exercício repetidos. Lista de frases que não podem reaparecer: ${avoid}`}],temperature:0.95,max_tokens:3800,response_format:{type:'json_object'}});let text=response.choices?.[0]?.message?.content||'',parsed=JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g,''));for(const raw of (parsed.exercises||[])){let item={prompt:String(raw.prompt||'').trim(),correct:String(raw.correct||'').trim(),options:Array.isArray(raw.options)?raw.options.map(x=>String(x).trim()):[]},norm=normalizeQuestion(item.prompt),hash=questionHash(item.prompt);if(norm.length<8||item.correct.length<2||item.options.length!==4||new Set(item.options.map(normalizeQuestion)).size!==4||!item.options.some(x=>normalizeQuestion(x)===normalizeQuestion(item.correct))||base.has(norm)||seen.has(hash)||batchPrompts.has(norm))continue;seen.add(hash);batchPrompts.add(norm);batch.push(item);if(existing.length+batch.length>=10)break}}if(existing.length+batch.length<10)throw new Error('Não consegui gerar dez questões novas sem repetição. Tente novamente.');state.aiPacks[key]=[...existing,...batch.map((item,i)=>i%4===1?{...item,prompt:item.correct,correct:item.prompt,options:[],kind:'write'}:{...item,kind:'translate'})];state.aiSeen[key]=[...seen].slice(-2500);state.aiHistory[key]=[...history,...batch.map(x=>x.prompt)].slice(-80);save();document.querySelector('#modal-root').innerHTML='';startLesson(lang,false,true)}catch(error){if(automatic){document.querySelector('#modal-root').innerHTML='';toast('Não consegui gerar novas questões agora. Vou abrir a prática local.');startLesson(lang);return}aiProgress(error.message||'Não foi possível gerar questões. Verifique espaço livre e conexão inicial.',0);let root=document.querySelector('#modal-root'),box=root.querySelector('.ai-progress');box.innerHTML=`<div class="eyebrow">IA NO DISPOSITIVO · ${level}</div><h2>Não foi possível gerar a lição</h2><p>${esc(error.message||'Tente novamente quando o dispositivo estiver pronto.')}</p><button class="secondary-btn" id="ai-close">Fechar</button>`;root.querySelector('#ai-close').onclick=()=>root.innerHTML=''}}
 function wireActions(){content.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{let a=b.dataset.action,id=b.dataset.lang;if(a==='courses')nav('courses');if(a==='placement'){quiz=null;nav('placement')}if(a==='add-lang'){if(!courseData(id)){state.courses.push({lang:id,level:levelsFor(id)[0],levelStartDone:countDone(id),unit:'Olá! Prazer em conhecer'});save();toast('Idioma adicionado à sua jornada!');courses()}}if(a==='lesson'){let key=`${id}:${currentLevel(id)}`,pack=state.aiPacks[key]||[];if(pack.length>=10)startLesson(id,false,true);else if(state.aiEnabled[id])generateAILesson(id,true);else startLesson(id)}if(a==='ai-lesson'){state.aiEnabled[id]=true;save();let key=`${id}:${currentLevel(id)}`;if((state.aiPacks[key]||[]).length>=10)startLesson(id,false,true);else generateAILesson(id)}if(a==='quiz-next'){quiz.answers.push(quiz.correct);quiz.idx++;quiz.selected=null;placement()}if(a==='restart-quiz'){quiz=null;placement()}if(a==='apply-level'){let c=courseData(id);if(c){c.level=b.dataset.level;c.levelStartDone=countDone(id)}save();quiz=null;nav('courses');toast('Nível definido! Sua jornada começa agora.')}if(a==='review-start'){let id=content.querySelector('#review-language')?.value||state.courses[0]?.lang;if(id)startLesson(id,true);else nav('courses')}})}
 let lessonState=null;
+function clearLessonPromptEvents(root){root.onclick=null;root.onkeydown=null;root.oninput=null;root.onchange=null;root.onfocusin=null}
+function renderLessonPrompt(root,ls,exercise,baseEx){
+ const prompt=root.querySelector('.exercise-prompt');
+ if(!prompt)return;
+ prompt.replaceChildren();
+ const hint=document.createElement('div');
+ hint.className='word-translation';
+ hint.setAttribute('role','status');
+ hint.setAttribute('aria-live','polite');
+ hint.hidden=true;
+ let activeWord=null;
+ const closeHint=()=>{activeWord=null;hint.hidden=true;hint.replaceChildren()};
+ const closeOnOtherInteraction=event=>{if(!(event.target instanceof Element)||!event.target.closest('.prompt-word'))closeHint()};
+ root.onclick=closeOnOtherInteraction;
+ root.onkeydown=closeOnOtherInteraction;
+ root.oninput=closeOnOtherInteraction;
+ root.onchange=closeOnOtherInteraction;
+ root.onfocusin=closeOnOtherInteraction;
+ const parts=String(exercise.prompt).match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[\p{L}\p{M}]+(?:['’\-][\p{L}\p{M}]+)*|[^\p{L}\p{M}]+/gu)||[];
+ for(const part of parts){
+  if(!/^[\p{L}\p{M}]/u.test(part)){prompt.append(document.createTextNode(part));continue}
+  const button=document.createElement('button');
+  button.type='button';
+  button.className='prompt-word';
+  button.textContent=part;
+  button.setAttribute('aria-label',`Ver tradução de ${part}`);
+  button.addEventListener('click',()=>{
+   if(activeWord===part){closeHint();return}
+   activeWord=part;
+   const reverse=baseEx.kind==='write';
+   const wordTranslation=window.voxparliLocalBank.translateWord(ls.lang,part,bankLevel(ls.lang,currentLevel(ls.lang)),reverse);
+   const sentenceTranslation=baseEx.correct;
+   const label=document.createElement('span');
+   label.className='word-translation-label';
+   label.textContent=wordTranslation?'Tradução de':'No contexto';
+   const value=document.createElement('strong');
+   value.textContent=wordTranslation||sentenceTranslation||'Tradução indisponível';
+   hint.replaceChildren(label,value);
+   hint.hidden=false;
+  });
+  prompt.append(button);
+ }
+ prompt.append(hint);
+}
 function startLesson(lang,reviewMode=false,aiMode=false){
  let key=`${lang}:${currentLevel(lang)}`,localItems=null;
  if(!reviewMode&&!aiMode&&window.voxparliLocalBank){let seen=state.localSeen[lang]||[],tier=bankLevel(lang,currentLevel(lang));localItems=window.voxparliLocalBank.generate(lang,tier,seen,Date.now()+seen.length).slice(0,10);if(localItems.length<10)localItems=window.voxparliLocalBank.generate(lang,tier,[],Date.now()+seen.length+1).slice(0,10);if(localItems.length){state.localSeen[lang]=[...new Set([...seen,...localItems.map(x=>x.id)])].slice(-10000);save()}}
@@ -87,7 +131,7 @@ function showLesson(){
  if(ls.idx>=ls.questions.length){
   if(!ls.reviewMode){const firstDone=countDone(ls.lang);for(let i=0;i<ls.initialQuestionCount;i++)state.done[`${ls.lang}:${firstDone+i}`]=1;if(ls.aiItems){let key=`${ls.lang}:${level}`;state.aiPacks[key]=(state.aiPacks[key]||[]).slice(10)}state.streak=Math.max(1,state.streak);let total=countDone(ls.lang);const course=courseData(ls.lang),courseLevels=levelsFor(ls.lang),levelIndex=courseLevels.indexOf(level);if(total-(course.levelStartDone||0)>=1200&&levelIndex<courseLevels.length-1){course.level=courseLevels[levelIndex+1];course.levelStartDone=total}save()}
   root.innerHTML=`<div class="lesson-overlay"><div class="lesson-modal" style="text-align:center;padding:35px"><div style="font-size:51px">${ls.score>=7?'🎉':'🌟'}</div><div class="eyebrow" style="margin-top:12px">LIÇÃO CONCLUÍDA</div><h2 style="font:800 24px Manrope">${ls.score>=7?'Muito bem!':'Bom trabalho!'}</h2><p style="font-size:13px;color:var(--muted)">Você acertou ${ls.score} de ${ls.questions.length} tentativas.${!ls.reviewMode?' Seu progresso foi salvo.':''}</p><button class="primary-btn" data-close style="margin-top:12px">Continuar</button></div></div>`;
-  root.querySelector('[data-close]').onclick=()=>{root.innerHTML='';activeLesson=null;home()};
+  root.querySelector('[data-close]').onclick=()=>{clearLessonPromptEvents(root);root.innerHTML='';activeLesson=null;home()};
   return;
  }
  const baseEx=ex,speakSlot=[3,7].includes(ls.idx)&&speakingActive()&&!ls.reviewMode,oralExercise=baseEx.kind==='speak'||speakSlot;
@@ -96,7 +140,8 @@ function showLesson(){
  const paused=Date.now()<state.speakingPauseUntil,correct=!!ls.answerCorrect,remainingMinutes=Math.ceil(Math.max(0,state.speakingPauseUntil-Date.now())/60000);
  if(ls.audioSpokenIdx!==ls.idx){ls.audioSpokenIdx=ls.idx;if(exercise.kind!=='write')speak(exercise.prompt,ls.lang)}
  root.innerHTML=`<div class="lesson-overlay"><div class="lesson-modal"><div class="lesson-head"><button class="close-button" data-close>×</button><div class="lesson-track"><span style="width:${Math.min(100,ls.idx/ls.questions.length*100)}%"></span></div><span class="heart">♥ 5</span></div><div class="lesson-body"><div class="eyebrow">${lang.flag} ${lang.name.toUpperCase()} · ${level} · EXERCÍCIO ${ls.idx+1}/${ls.questions.length}</div><h2>${ls.idx%2===0?'Vamos praticar!':'Você consegue!'}</h2><p>${instruction}</p><div class="exercise-prompt">${esc(exercise.prompt)}</div><div class="lesson-options">${exercise.kind==='speak'?`<div class="speaking-panel"><button class="primary-btn" data-action="speak-start" ${ls.checked?'disabled':''}>🎙 Falar agora</button><p>${esc(ls.heard||'')}</p><small>${esc(ls.speechMessage||'')}</small></div>`:inputMode?`<input class="written-answer" aria-label="Sua resposta" placeholder="Digite sua resposta…" value="${esc(ls.selected||'')}" ${ls.checked?'disabled':''}>`:exercise.options.map(o=>`<button class="lesson-answer ${ls.selected===o?'selected':''} ${ls.checked&&o===exercise.correct?'correct':''} ${ls.checked&&ls.selected===o&&o!==exercise.correct?'wrong':''}" data-exanswer="${esc(o)}" ${ls.checked?'disabled':''}>${esc(o)}</button>`).join('')}</div></div>${exercise.kind!=='write'?`<div class="speaking-controls"><label><input type="checkbox" id="lesson-speaking" ${state.speakingEnabled?'checked':''}> Exercícios de fala</label><button class="text-button" data-action="pause-speaking">${paused?`Pausa ativa · ${remainingMinutes} min`:'Desativar áudio e fala por 15 min'}</button></div>`:''}<div class="lesson-footer"><span class="quiz-feedback">${ls.checked?(correct?'✓ Muito bem!':`Resposta: ${esc(exercise.correct)}`):''}</span><button class="primary-btn" data-action="${ls.checked?'next':'check'}" ${ls.selected||ls.checked?'':'disabled'}>${ls.checked?'Continuar →':'Conferir'}</button></div></div></div>`;
- root.querySelector('[data-close]').onclick=()=>{stopSpeech();root.innerHTML='';activeLesson=null};
+ renderLessonPrompt(root,ls,exercise,baseEx);
+ root.querySelector('[data-close]').onclick=()=>{stopSpeech();clearLessonPromptEvents(root);root.innerHTML='';activeLesson=null};
  root.querySelector('#lesson-speaking')?.addEventListener('change',e=>{state.speakingEnabled=e.target.checked;save();showLesson()});
  root.querySelector('[data-action="pause-speaking"]')?.addEventListener('click',()=>{state.speakingPauseUntil=Date.now()+900000;stopSpeech();save();toast('Áudio e fala desativados por 15 minutos.');showLesson()});
  root.querySelector('[data-action="speak-start"]')?.addEventListener('click',()=>{ls.speechMessage='Escutando…';showLesson();recognizeSpeech(exercise.correct,ls.lang,(heard,ok)=>{ls.heard=heard;ls.selected=heard;ls.checked=true;ls.answerCorrect=ok;ls.speechMessage=ok?'✓ Fala reconhecida!':'Não coincidiu. Tente novamente.';if(ok)ls.score++;showLesson()},msg=>{ls.speechMessage=msg;showLesson()})});
