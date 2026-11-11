@@ -105,6 +105,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.Normalizer
+import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
 import kotlin.math.floor
 // Paleta de cores da interface nativa.
@@ -210,6 +212,7 @@ private data class PlacementSession(
 private data class AppState(
     val profileName: String = "",
     val streak: Int = 0,
+    val streakLastStudyDate: String = "",
     val courses: List<Course> = emptyList(),
     val doneCounts: Map<String, Int> = emptyMap(),
     val seenQuestionIds: Map<String, List<String>> = emptyMap(),
@@ -220,6 +223,27 @@ private data class AppState(
     val speechVoiceId: String = ""
 )
 private enum class Page { HOME, COURSES, REVIEW, PLACEMENT }
+private fun localDateKey(calendar: Calendar): String =
+    SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(calendar.time)
+private fun refreshStreak(state: AppState, today: Calendar = Calendar.getInstance()): AppState {
+    val todayKey = localDateKey(today)
+    val yesterday = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
+    return if (
+        state.streakLastStudyDate.isNotEmpty() &&
+        state.streakLastStudyDate != todayKey &&
+        state.streakLastStudyDate != localDateKey(yesterday)
+    ) state.copy(streak = 0) else state
+}
+private fun recordStudyDay(state: AppState, today: Calendar = Calendar.getInstance()): AppState {
+    val todayKey = localDateKey(today)
+    val yesterday = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
+    val streak = when (state.streakLastStudyDate) {
+        todayKey -> maxOf(1, state.streak)
+        localDateKey(yesterday) -> maxOf(1, state.streak) + 1
+        else -> 1
+    }
+    return state.copy(streak = streak, streakLastStudyDate = todayKey)
+}
 // Inicializa a síntese de voz e a interface principal do Android.
 class MainActivity : ComponentActivity() {
     private var textToSpeech: TextToSpeech? = null
@@ -404,8 +428,7 @@ private fun VoxparliApp(voices: List<SpeechVoice>, onSpeak: (String, String, Str
                 } else course
             }
             updateState { current ->
-                current.copy(
-                    streak = maxOf(1, current.streak),
+                recordStudyDay(current).copy(
                     courses = nextCourses,
                     doneCounts = current.doneCounts + (session.languageId to done),
                     seenQuestionIds = current.seenQuestionIds + (session.languageId to
@@ -750,12 +773,6 @@ private fun HomePage(
                 item { OutlinedButton(onClick = onCourses, modifier = Modifier.fillMaxWidth()) { Text("Ver todos os idiomas") } }
             }
         }
-        item {
-            Text("Seu caminho de hoje", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 5.dp))
-        }
-        item { UnitRow("01", "Olá! Prazer em conhecer", "Cumprimentos e apresentações", if (state.courses.isEmpty()) "Escolha um idioma" else "Disponível") }
-        item { UnitRow("02", "Palavras do cotidiano", "Pessoas, lugares e objetos", "A seguir") }
-        item { UnitRow("03", "Uma conversa simples", "Perguntas e respostas", "A seguir") }
     }
 }
 @Composable
@@ -1160,22 +1177,6 @@ private fun AnswerOption(option: String, selected: Boolean, correct: Boolean, en
     }
 }
 @Composable
-private fun UnitRow(number: String, title: String, subtitle: String, status: String) {
-    Card(colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Line), shape = RoundedCornerShape(13.dp)) {
-        Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(color = SoftGreen, shape = CircleShape, modifier = Modifier.size(37.dp)) {
-                Box(contentAlignment = Alignment.Center) { Text(number, color = LeafDark, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-            }
-            Spacer(Modifier.width(11.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text(subtitle, color = Muted, fontSize = 11.sp)
-            }
-            Text(status, color = Muted, fontSize = 10.sp)
-        }
-    }
-}
-@Composable
 private fun PageHeader(eyebrow: String, title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(bottom = 4.dp)) {
         Text(eyebrow, color = Leaf, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
@@ -1409,7 +1410,7 @@ private object AppStateStore {
     private const val StateKey = "state"
     fun load(context: Context): AppState {
         val raw = context.getSharedPreferences(Preferences, Context.MODE_PRIVATE).getString(StateKey, null) ?: return AppState()
-        return runCatching { decode(raw) }.getOrDefault(AppState())
+        return runCatching { refreshStreak(decode(raw)) }.getOrDefault(AppState())
     }
     fun save(context: Context, state: AppState) {
         context.getSharedPreferences(Preferences, Context.MODE_PRIVATE).edit().putString(StateKey, export(state).toString()).apply()
@@ -1442,6 +1443,7 @@ private object AppStateStore {
                 put("courses", courses)
                 put("done", done)
                 put("streak", state.streak)
+                put("streakLastStudyDate", state.streakLastStudyDate)
                 put("audioEnabled", state.audioEnabled)
                 put("speakingEnabled", state.speakingEnabled)
                 put("audioPauseUntil", state.audioPauseUntil)
@@ -1496,6 +1498,7 @@ private object AppStateStore {
         return AppState(
             profileName = profile?.optString("name").orEmpty(),
             streak = data.optInt("streak", 0),
+            streakLastStudyDate = data.optString("streakLastStudyDate", ""),
             courses = courses,
             doneCounts = counts,
             seenQuestionIds = seen,
